@@ -1207,8 +1207,8 @@ function renderPreview() {
   const rows = records
     .map((record, i) => {
       const conflict = record.conflict
-        ? '<span class="conflict">already in the ' + record.conflict.where + ': &ldquo;' +
-          escapeHtml(record.conflict.existingAnswer) + '&rdquo;</span>'
+        ? '<span class="conflict">already in the ' + record.conflict.where + ': ' +
+          escapeHtml(record.conflict.existingAnswer) + '</span>'
         : '';
       return (
         '<tr><td><input type="checkbox" data-row="' + i + '"' + (record.include ? ' checked' : '') + '></td>' +
