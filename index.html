@@ -165,6 +165,36 @@ td.status { white-space: nowrap; }
   font-size: 11px; color: var(--ink-soft); font-variant-numeric: tabular-nums;
 }
 .hit { cursor: pointer; }
+
+/* Phones: a four-column table at 375px wraps the question to one word per
+   line. Stack each record into a labelled card instead. */
+@media (max-width: 560px) {
+  #preview thead { display: none; }
+  #preview table, #preview tbody { display: block; }
+  #preview tr {
+    display: block; border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 10px 12px; margin-bottom: 8px;
+  }
+  #preview td { display: block; border: 0; padding: 3px 0; }
+  #preview td:first-child,
+  #preview td[data-label="Status"] { display: inline-block; vertical-align: middle; }
+  #preview td[data-label="Status"] { margin-left: 8px; }
+  #preview td[data-label="Question"]::before,
+  #preview td[data-label="Correct answer"]::before {
+    content: attr(data-label); display: block;
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--ink-soft); margin-bottom: 1px;
+  }
+  .summary { gap: 10px; }
+  main { padding: 18px 16px 48px; }
+}
+
+/* Keyboard shortcuts are meaningless on a touch device. */
+.tap-hint { display: none; }
+@media (pointer: coarse) {
+  .kbd-hint { display: none; }
+  .tap-hint { display: inline; }
+}
 </style>
 </head>
 <body>
@@ -183,7 +213,7 @@ td.status { white-space: nowrap; }
            autocomplete="off" spellcheck="false" autofocus>
     <div id="subject-chips" class="chips"></div>
     <div id="results" class="results" aria-live="polite"></div>
-    <p class="hint">Results rank as you type. Arrow keys move through them, Escape clears.</p>
+    <p class="hint">Results rank as you type. <span class="kbd-hint">Arrow keys move through them, Alt+1&ndash;9 jump, Escape clears.</span><span class="tap-hint">Tap a result to select it.</span></p>
   </section>
 
   <section id="screen-bank" class="screen">
@@ -1182,9 +1212,9 @@ function renderPreview() {
         : '';
       return (
         '<tr><td><input type="checkbox" data-row="' + i + '"' + (record.include ? ' checked' : '') + '></td>' +
-        '<td class="status"><span class="pill ' + record.status + '">' + record.status + '</span></td>' +
-        '<td>' + escapeHtml(record.question) + '</td>' +
-        '<td>' + escapeHtml(record.answer) + conflict + '</td></tr>'
+        '<td class="status" data-label="Status"><span class="pill ' + record.status + '">' + record.status + '</span></td>' +
+        '<td data-label="Question">' + escapeHtml(record.question) + '</td>' +
+        '<td data-label="Correct answer">' + escapeHtml(record.answer) + conflict + '</td></tr>'
       );
     })
     .join('');
