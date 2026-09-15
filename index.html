@@ -1,0 +1,1429 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conyso Recall</title>
+<meta name="description" content="Instant lookup over a question and answer bank you paste in yourself. One self-contained page, no account, no server, nothing stored or sent anywhere.">
+<meta name="theme-color" content="#2f6f5f">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232f6f5f'/%3E%3Ctext x='16' y='23' font-size='19' font-family='system-ui,sans-serif' font-weight='600' fill='white' text-anchor='middle'%3ER%3C/text%3E%3C/svg%3E">
+<style>
+:root {
+  --ink: #16181d;
+  --ink-soft: #5b6270;
+  --line: #e3e6ec;
+  --bg: #fbfbfc;
+  --panel: #ffffff;
+  --accent: #2f6f5f;
+  --accent-soft: #eaf3f0;
+  --warn: #a8531c;
+  --warn-soft: #fbf0e6;
+  --bad: #a8203a;
+  --bad-soft: #fbe9ec;
+  --radius: 8px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e8eaee; --ink-soft: #9aa2b1; --line: #2a2f39;
+    --bg: #14161a; --panel: #1b1e24;
+    --accent: #6bbfa6; --accent-soft: #1d2b28;
+    --warn: #e0a06a; --warn-soft: #2c231a;
+    --bad: #e88298; --bad-soft: #2d1a20;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+
+.bar {
+  display: flex; align-items: center; gap: 20px;
+  padding: 12px 20px; border-bottom: 1px solid var(--line);
+  background: var(--panel); position: sticky; top: 0; z-index: 5;
+}
+.bar h1 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
+.tabs { display: flex; gap: 4px; }
+.tab {
+  border: 0; background: none; color: var(--ink-soft);
+  padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 14px;
+}
+.tab:hover { background: var(--accent-soft); }
+.tab.is-active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.count { margin-left: auto; color: var(--ink-soft); font-size: 13px; font-variant-numeric: tabular-nums; }
+
+main { max-width: 1000px; margin: 0 auto; padding: 24px 20px 60px; }
+.screen { display: none; }
+.screen.is-active { display: block; }
+
+.search {
+  width: 100%; padding: 14px 16px; font-size: 20px;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel); color: var(--ink);
+}
+.search:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 4px; }
+.chip {
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink-soft);
+  padding: 4px 10px; border-radius: 999px; cursor: pointer; font-size: 13px;
+}
+.chip.is-active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.results { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+.hit {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel); padding: 12px 14px; cursor: default;
+}
+.hit.is-top { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.hit .q { color: var(--ink-soft); font-size: 14px; }
+.hit .a { margin-top: 4px; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+.hit.is-top .a { font-size: 22px; color: var(--accent); }
+.hit .tag {
+  display: inline-block; margin-left: 8px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--ink-soft);
+}
+.hit mark, .shared-stem mark { background: var(--accent-soft); color: var(--accent); font-weight: 600; border-radius: 3px; padding: 0 1px; }
+
+.empty { color: var(--ink-soft); padding: 18px 0; }
+.hint { color: var(--ink-soft); font-size: 13px; margin-top: 18px; }
+
+.grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 28px; }
+@media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+
+h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-soft); margin: 0 0 12px; }
+
+.field { display: block; margin-bottom: 12px; }
+.field span { display: block; font-size: 13px; margin-bottom: 4px; color: var(--ink-soft); }
+.field em { font-style: normal; opacity: 0.7; }
+input[type=text], select, textarea {
+  width: 100%; padding: 8px 10px; font: inherit;
+  border: 1px solid var(--line); border-radius: 6px;
+  background: var(--panel); color: var(--ink);
+}
+textarea { font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+
+.actions { display: flex; gap: 8px; margin-top: 12px; }
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.actions button, .preview button, .batches button {
+  padding: 8px 14px; font: inherit; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 6px;
+  background: var(--panel); color: var(--ink);
+}
+
+.preview { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 20px; }
+.summary { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; font-size: 14px; }
+.summary b { font-variant-numeric: tabular-nums; }
+.pill { padding: 2px 8px; border-radius: 999px; font-size: 12px; }
+.pill.new { background: var(--accent-soft); color: var(--accent); }
+.pill.duplicate { background: var(--warn-soft); color: var(--warn); }
+.pill.contradiction { background: var(--bad-soft); color: var(--bad); }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-soft); }
+td.status { white-space: nowrap; }
+.conflict { display: block; font-size: 12px; color: var(--bad); margin-top: 3px; }
+
+.problems { margin-top: 16px; background: var(--warn-soft); border-radius: var(--radius); padding: 12px 14px; }
+.problems h3 { margin: 0 0 8px; font-size: 13px; color: var(--warn); }
+.problems li { font-size: 13px; margin-bottom: 3px; }
+.problems code { font-family: ui-monospace, Menlo, monospace; }
+
+.batches .batch {
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel);
+  padding: 10px 12px; margin-bottom: 8px; display: flex; align-items: center; gap: 10px;
+}
+.batches .batch div { flex: 1; }
+.batches .batch small { display: block; color: var(--ink-soft); font-size: 12px; }
+
+.session-note {
+  background: var(--accent-soft); color: var(--ink);
+  border-radius: var(--radius); padding: 10px 14px;
+  font-size: 13px; margin: 0 0 22px;
+}
+.session-note strong { color: var(--accent); }
+.session-note em { font-style: normal; font-weight: 600; }
+.batches .empty { margin: 0 0 8px; }
+
+.approx-note {
+  margin: 0 0 4px; font-size: 13px; color: var(--warn);
+  background: var(--warn-soft); padding: 7px 12px; border-radius: var(--radius);
+}
+
+.shared-stem {
+  margin: 0 0 6px; font-size: 13px; color: var(--ink-soft);
+  letter-spacing: 0.01em;
+}
+.hit .num {
+  display: inline-block; min-width: 17px; margin-right: 7px;
+  font-size: 11px; color: var(--ink-soft); font-variant-numeric: tabular-nums;
+}
+.hit { cursor: pointer; }
+</style>
+</head>
+<body>
+<header class="bar">
+  <h1>Recall</h1>
+  <nav class="tabs">
+    <button class="tab is-active" data-screen="lookup">Lookup</button>
+    <button class="tab" data-screen="bank">Bank</button>
+  </nav>
+  <span class="count" id="bank-count">&mdash;</span>
+</header>
+
+<main>
+  <section id="screen-lookup" class="screen is-active">
+    <input id="q" class="search" type="search" placeholder="Type any words from the question&hellip;"
+           autocomplete="off" spellcheck="false" autofocus>
+    <div id="subject-chips" class="chips"></div>
+    <div id="results" class="results" aria-live="polite"></div>
+    <p class="hint">Results rank as you type. Arrow keys move through them, Escape clears.</p>
+  </section>
+
+  <section id="screen-bank" class="screen">
+    <p class="session-note">
+      <strong>Session only.</strong> The bank lives in this tab and is gone when you close it.
+      Nothing is saved to disk and nothing leaves the page. Use <em>Copy bank</em> before you go
+      if you want to paste it back later.
+    </p>
+
+    <div class="grid">
+      <div>
+        <h2>Paste a batch</h2>
+        <label class="field">
+          <span>Subject <em>(optional tag for this batch)</em></span>
+          <input id="subject" type="text" placeholder="ops, ob, bms&hellip;" autocomplete="off">
+        </label>
+        <label class="field">
+          <span>Format</span>
+          <select id="convention">
+            <option value="">Detect automatically</option>
+            <option value="qa">Q: / A: blocks</option>
+            <option value="pipe">question | answer</option>
+            <option value="tab">question &rarr;tab&rarr; answer</option>
+            <option value="alternating">Alternating lines</option>
+          </select>
+        </label>
+        <textarea id="paste" rows="14" spellcheck="false"
+          placeholder="Q: What is kaizen?&#10;A: Continuous incremental improvement&#10;&#10;or&#10;&#10;What is kaizen? | Continuous incremental improvement&#10;&#10;or one per line, question then answer."></textarea>
+        <div class="actions">
+          <button id="btn-preview" class="primary">Preview</button>
+          <button id="btn-clear">Clear</button>
+        </div>
+      </div>
+
+      <div>
+        <h2>This session</h2>
+        <div id="batches" class="batches"></div>
+        <div class="actions">
+          <button id="btn-copy">Copy bank</button>
+          <button id="btn-wipe">Empty the bank</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="preview" class="preview" hidden></div>
+  </section>
+</main>
+
+<script>
+// ---------------------------------------------------------- normalize.js
+// Text normalisation shared by parsing, conflict detection, and search.
+// Pure: no I/O, no dependencies.
+
+/**
+ * Collapse a question to a comparison key: lowercased, punctuation dropped,
+ * whitespace collapsed. Two questions with the same key are the same question
+ * for the purposes of duplicate and contradiction detection.
+ */
+function normalizeQuestion(text) {
+  return String(text ?? '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+/** Split normalised text into tokens. */
+function tokenize(text) {
+  const norm = normalizeQuestion(text);
+  return norm.length === 0 ? [] : norm.split(' ');
+}
+
+// ---------------------------------------------------------- parse.js
+// Bulk-paste parser: raw pasted text -> question/answer records.
+// Pure: no I/O, no database, no HTTP. The only module that knows paste formats.
+
+const QUESTION_PREFIX = /^\s*(?:q|ques|question)\s*[:.)\-]\s*/i;
+const ANSWER_PREFIX = /^\s*(?:a|ans|answer|correct\s*answer)\s*[:.)\-]\s*/i;
+const LEADING_NUMBER = /^\s*\(?\d+\)?\s*[.):\-]\s*/;
+
+const CONVENTIONS = ['qa', 'tab', 'pipe', 'alternating'];
+
+function stripQuestionNoise(text) {
+  let out = String(text).trim();
+  out = out.replace(QUESTION_PREFIX, '');
+  out = out.replace(LEADING_NUMBER, '');
+  return out.trim();
+}
+
+function stripAnswerNoise(text) {
+  return String(text).trim().replace(ANSWER_PREFIX, '').trim();
+}
+
+/**
+ * Score each convention across the whole input and return the strongest.
+ * Deciding once for the whole document, rather than per line, stops a single
+ * stray pipe or tab from changing how the rest of the text is read.
+ */
+function detectConvention(lines) {
+  const nonEmpty = lines.filter((l) => l.trim().length > 0);
+  if (nonEmpty.length === 0) return 'alternating';
+
+  let questionLines = 0;
+  let answerLines = 0;
+  let pipeLines = 0;
+  let tabLines = 0;
+
+  for (const line of nonEmpty) {
+    if (QUESTION_PREFIX.test(line)) questionLines += 1;
+    if (ANSWER_PREFIX.test(line)) answerLines += 1;
+
+    const tabIndex = line.indexOf('\t');
+    if (tabIndex > 0 && line.slice(tabIndex + 1).trim().length > 0) tabLines += 1;
+
+    const pipeIndex = line.indexOf('|');
+    if (
+      pipeIndex > 0 &&
+      line.slice(0, pipeIndex).trim().length > 0 &&
+      line.slice(pipeIndex + 1).trim().length > 0
+    ) {
+      pipeLines += 1;
+    }
+  }
+
+  const scores = {
+    // A Q:/A: document needs both halves present, so score on the weaker one.
+    qa: Math.min(questionLines, answerLines) * 2,
+    tab: tabLines,
+    pipe: pipeLines,
+    // Weakest signal: always available, so it is the fallback.
+    alternating: nonEmpty.length / 2 - 0.5,
+  };
+
+  let best = 'alternating';
+  for (const name of CONVENTIONS) {
+    if (scores[name] > scores[best]) best = name;
+  }
+  return best;
+}
+
+function parseDelimited(lines, delimiter) {
+  const entries = [];
+  const problems = [];
+
+  lines.forEach((raw, index) => {
+    const line = raw.trim();
+    if (line.length === 0) return;
+
+    const at = line.indexOf(delimiter);
+    if (at < 0) {
+      problems.push({ line: index + 1, text: line, reason: 'no delimiter on this line' });
+      return;
+    }
+
+    const question = stripQuestionNoise(line.slice(0, at));
+    const answer = stripAnswerNoise(line.slice(at + 1));
+
+    if (question.length === 0) {
+      problems.push({ line: index + 1, text: line, reason: 'question side is empty' });
+      return;
+    }
+    if (answer.length === 0) {
+      problems.push({ line: index + 1, text: line, reason: 'answer side is empty' });
+      return;
+    }
+    entries.push({ question, answer, line: index + 1 });
+  });
+
+  return { entries, problems };
+}
+
+function parseQaBlocks(lines) {
+  const entries = [];
+  const problems = [];
+
+  let question = [];
+  let answer = [];
+  let mode = null;
+  let questionLine = 0;
+
+  const flush = () => {
+    const q = stripQuestionNoise(question.join(' '));
+    const a = stripAnswerNoise(answer.join(' '));
+    if (q.length === 0 && a.length === 0) return;
+    if (q.length === 0) {
+      problems.push({ line: questionLine, text: a, reason: 'answer with no question' });
+    } else if (a.length === 0) {
+      problems.push({ line: questionLine, text: q, reason: 'question with no answer' });
+    } else {
+      entries.push({ question: q, answer: a, line: questionLine });
+    }
+    question = [];
+    answer = [];
+    mode = null;
+  };
+
+  lines.forEach((raw, index) => {
+    const line = raw.trim();
+
+    if (QUESTION_PREFIX.test(line)) {
+      flush();
+      questionLine = index + 1;
+      question = [line];
+      mode = 'q';
+      return;
+    }
+
+    if (ANSWER_PREFIX.test(line)) {
+      if (mode === null) {
+        problems.push({ line: index + 1, text: line, reason: 'answer with no question' });
+        return;
+      }
+      answer = [line];
+      mode = 'a';
+      return;
+    }
+
+    if (line.length === 0) return;
+
+    // Continuation of whichever half is open.
+    if (mode === 'q') question.push(line);
+    else if (mode === 'a') answer.push(line);
+    else problems.push({ line: index + 1, text: line, reason: 'text outside any Q/A block' });
+  });
+
+  flush();
+  return { entries, problems };
+}
+
+function parseAlternating(lines) {
+  const entries = [];
+  const problems = [];
+
+  const kept = [];
+  lines.forEach((raw, index) => {
+    const line = raw.trim();
+    if (line.length > 0) kept.push({ line: index + 1, text: line });
+  });
+
+  for (let i = 0; i + 1 < kept.length; i += 2) {
+    const question = stripQuestionNoise(kept[i].text);
+    const answer = stripAnswerNoise(kept[i + 1].text);
+    if (question.length === 0 || answer.length === 0) {
+      problems.push({
+        line: kept[i].line,
+        text: kept[i].text,
+        reason: 'question or answer empty after cleaning',
+      });
+      continue;
+    }
+    entries.push({ question, answer, line: kept[i].line });
+  }
+
+  if (kept.length % 2 === 1) {
+    const last = kept[kept.length - 1];
+    problems.push({ line: last.line, text: last.text, reason: 'unpaired line at end of paste' });
+  }
+
+  return { entries, problems };
+}
+
+/**
+ * Parse pasted text into records.
+ * @returns {{convention: string, entries: Array, problems: Array}}
+ */
+function parseBank(raw, options = {}) {
+  const text = String(raw ?? '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  const lines = text.split('\n');
+
+  if (text.trim().length === 0) {
+    return { convention: 'alternating', entries: [], problems: [] };
+  }
+
+  const convention = options.convention ?? detectConvention(lines);
+
+  let result;
+  switch (convention) {
+    case 'qa':
+      result = parseQaBlocks(lines);
+      break;
+    case 'tab':
+      result = parseDelimited(lines, '\t');
+      break;
+    case 'pipe':
+      result = parseDelimited(lines, '|');
+      break;
+    default:
+      result = parseAlternating(lines);
+      break;
+  }
+
+  return { convention, ...result };
+}
+
+// ---------------------------------------------------------- analyze.js
+// Duplicate and contradiction detection for an incoming import.
+// Pure: takes parsed records plus what is already in the bank, returns a verdict
+// per record. Kept separate from parse.js (which knows formats) and db.js (which
+// knows storage) because it is the only place that decides what a defect is.
+
+
+const sameAnswer = (a, b) => normalizeQuestion(a) === normalizeQuestion(b);
+
+/**
+ * @param entries parsed records from parseBank
+ * @param existing rows already in the bank, as {question_norm, answer}
+ * @returns {{records: Array, counts: Object}}
+ */
+function analyzeImport(entries, existing = []) {
+  const seen = new Map();
+
+  const remember = (norm, answer, where) => {
+    if (!seen.has(norm)) seen.set(norm, []);
+    seen.get(norm).push({ answer, where });
+  };
+
+  for (const row of existing) {
+    remember(row.question_norm ?? normalizeQuestion(row.question), row.answer, 'bank');
+  }
+
+  const records = entries.map((entry) => {
+    const questionNorm = normalizeQuestion(entry.question);
+    const priors = seen.get(questionNorm) ?? [];
+
+    let status = 'new';
+    let conflict = null;
+
+    if (priors.length > 0) {
+      const disagreeing = priors.find((prior) => !sameAnswer(prior.answer, entry.answer));
+      if (disagreeing) {
+        // Same question, different answer. In an answer key this is a defect,
+        // not a duplicate, and it is the one the operator must see.
+        status = 'contradiction';
+        conflict = { existingAnswer: disagreeing.answer, where: disagreeing.where };
+      } else {
+        status = 'duplicate';
+        conflict = { existingAnswer: priors[0].answer, where: priors[0].where };
+      }
+    }
+
+    remember(questionNorm, entry.answer, 'paste');
+    return { ...entry, question_norm: questionNorm, status, conflict };
+  });
+
+  const counts = { new: 0, duplicate: 0, contradiction: 0 };
+  for (const record of records) counts[record.status] += 1;
+
+  return { records, counts };
+}
+
+// ---------------------------------------------------------- search.js
+// Ranked search over an in-memory bank.
+// Pure: no I/O, no dependencies. Loaded verbatim by both the browser and the
+// test suite, so the tests constrain the behaviour the UI actually runs.
+//
+// Matching is tiered per token rather than globally relaxed. Each query token is
+// resolved against the vocabulary at the cheapest tier that finds anything —
+// exact, then shared stem, then prefix, then typo. A token you typed correctly
+// is therefore never reinterpreted as a typo of something else, so typing well
+// keeps the precision of exact matching and only a token that genuinely misses
+// pays for the looser tiers.
+
+
+// Function words carry no discriminating information in a question bank, so
+// they contribute to ranking but are never required for a match. Without this,
+// "what is takt time" fails against the stem "Define takt time".
+const STOPWORDS = new Set([
+  'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'of', 'in',
+  'on', 'at', 'to', 'for', 'from', 'by', 'with', 'about', 'as', 'into', 'and',
+  'or', 'but', 'if', 'then', 'than', 'that', 'this', 'these', 'those', 'it',
+  'its', 'what', 'which', 'who', 'whom', 'whose', 'when', 'where', 'why', 'how',
+  'do', 'does', 'did', 'can', 'could', 'should', 'would', 'will', 'shall', 'may',
+  'might', 'must', 'have', 'has', 'had', 'not', 'no', 'all', 'any', 'each',
+  'some', 'such', 'so', 'you', 'your', 'i', 'we', 'they', 'he', 'she',
+]);
+
+const TIER_WEIGHT = { exact: 1, stem: 0.92, prefix: 0.85, fuzzy: 0.6 };
+
+// A term found only in the answer is real evidence but weaker than the same
+// term in the question, so a question match always outranks an answer match.
+const ANSWER_WEIGHT = 0.35;
+
+// A token is required unless it is a stopword or clearly less informative than
+// the most distinctive token in the query.
+const REQUIRED_IDF_RATIO = 0.4;
+
+// A typed word that matches nothing anywhere is dropped rather than failing the
+// query, but it costs a little confidence.
+const NOISE_PENALTY = 0.85;
+
+const PREFIX_MATCH_CAP = 48;
+
+// Where a word sits in the stem matters. People reach for the opening words of
+// a question, and the closing words are usually the specific ones, so a match at
+// either edge is stronger evidence than the same word buried in the middle.
+const FIRST_ANCHOR_BOOST = 1.6;
+const LAST_ANCHOR_BOOST = 1.25;
+
+// Typing the first word and the last word, skipping the middle, is a deliberate
+// and very common shorthand. Treat it as near-certain identification.
+const BOOKEND_BOOST = 2.2;
+
+/**
+ * Conservative suffix folding, applied identically to bank and query tokens so
+ * that singular and plural forms collapse together. Deliberately not a full
+ * stemmer: aggressive stemming costs precision, and the tiering below already
+ * recovers most of what a heavier stemmer would.
+ */
+function stemToken(token) {
+  if (token.length <= 3) return token;
+
+  let out = token;
+  if (out.endsWith('ies') && out.length > 4) {
+    out = out.slice(0, -3) + 'y';
+  } else if (out.endsWith('es') && out.length > 4 && /[sxz]$|ch$|sh$/.test(out.slice(0, -2))) {
+    out = out.slice(0, -2);
+  } else if (out.endsWith('s') && !out.endsWith('ss') && out.length > 3) {
+    out = out.slice(0, -1);
+  }
+
+  if (out.endsWith('ing') && out.length - 3 >= 4) out = out.slice(0, -3);
+  else if (out.endsWith('ed') && out.length - 2 >= 4) out = out.slice(0, -2);
+
+  // Uniform trailing-e drop keeps "operate"/"operating" and "waste"/"wastes"
+  // on the same key; applied to every token, so it cannot desynchronise.
+  if (out.length > 4 && out.endsWith('e')) out = out.slice(0, -1);
+
+  return out;
+}
+
+/** Damerau-Levenshtein (optimal string alignment) with an early bail-out. */
+function editDistance(a, b, max) {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+
+  let previous = new Array(b.length + 1);
+  let current = new Array(b.length + 1);
+  let beforePrevious = new Array(b.length + 1);
+
+  for (let j = 0; j <= b.length; j += 1) previous[j] = j;
+
+  for (let i = 1; i <= a.length; i += 1) {
+    current[0] = i;
+    let rowBest = current[0];
+
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let value = Math.min(current[j - 1] + 1, previous[j] + 1, previous[j - 1] + cost);
+
+      // Transposition: "kaizne" for "kaizen" is one slip, not two.
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        value = Math.min(value, beforePrevious[j - 2] + 1);
+      }
+      current[j] = value;
+      if (value < rowBest) rowBest = value;
+    }
+
+    if (rowBest > max) return max + 1;
+
+    const spare = beforePrevious;
+    beforePrevious = previous;
+    previous = current;
+    current = spare;
+  }
+
+  return previous[b.length];
+}
+
+const maxEdits = (length) => (length <= 4 ? 0 : length <= 7 ? 1 : 2);
+
+/**
+ * Precompute postings, frequencies and stem keys. Call once per bank load and
+ * reuse for every keystroke.
+ */
+function buildIndex(entries) {
+  const docs = entries.map((entry) => {
+    const qNorm = normalizeQuestion(entry.question);
+    const qTokens = qNorm.length === 0 ? [] : qNorm.split(' ');
+    const content = qTokens.filter((token) => !STOPWORDS.has(token));
+
+    // Both the literal edges and the first/last words that carry meaning: a
+    // stem opening "Which of the following is a lean waste?" is reached for
+    // either as "which" or as "lean".
+    const firstAnchors = new Set([qTokens[0], content[0]].filter(Boolean));
+    const lastAnchors = new Set(
+      [qTokens[qTokens.length - 1], content[content.length - 1]].filter(Boolean)
+    );
+
+    return {
+      entry,
+      qNorm,
+      qTokens,
+      aTokens: tokenize(entry.answer ?? ''),
+      firstAnchors,
+      lastAnchors,
+    };
+  });
+
+  const postings = new Map();
+  const add = (token, field, docIndex) => {
+    let record = postings.get(token);
+    if (!record) {
+      record = { q: new Set(), a: new Set() };
+      postings.set(token, record);
+    }
+    record[field].add(docIndex);
+  };
+
+  docs.forEach((doc, i) => {
+    for (const token of new Set(doc.qTokens)) add(token, 'q', i);
+    for (const token of new Set(doc.aTokens)) add(token, 'a', i);
+  });
+
+  const total = docs.length;
+  const idf = new Map();
+  const stems = new Map();
+
+  for (const [token, record] of postings) {
+    const documentFrequency = new Set([...record.q, ...record.a]).size;
+    // Rare tokens score far above common ones. On an MCQ bank this is what
+    // makes a distinctive term beat the boilerplate shared by every stem.
+    idf.set(token, Math.log(1 + total / (1 + documentFrequency)));
+
+    const key = stemToken(token);
+    if (!stems.has(key)) stems.set(key, []);
+    stems.get(key).push(token);
+  }
+
+  const lengths = docs.map((doc) => doc.qTokens.length);
+  const avgLength = lengths.length === 0 ? 1 : lengths.reduce((a, b) => a + b, 0) / lengths.length;
+
+  // Sorted vocabulary makes prefix lookup a binary search instead of a scan;
+  // length buckets keep the typo tier from comparing against words that cannot
+  // possibly be within the edit budget. Both matter once the bank is large:
+  // without them every keystroke walks the whole vocabulary.
+  const vocabulary = [...postings.keys()];
+  const sorted = [...vocabulary].sort();
+  const byLength = new Map();
+  for (const token of vocabulary) {
+    if (!byLength.has(token.length)) byLength.set(token.length, []);
+    byLength.get(token.length).push(token);
+  }
+
+  return {
+    docs, postings, idf, stems, vocabulary, sorted, byLength,
+    avgLength: avgLength || 1, total,
+  };
+}
+
+/** Index of the first sorted vocabulary entry >= target. */
+function lowerBound(sorted, target) {
+  let lo = 0;
+  let hi = sorted.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid] < target) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/** Vocabulary entries beginning with `prefix`, via binary search. */
+function withPrefix(index, prefix, cap) {
+  const out = [];
+  for (let i = lowerBound(index.sorted, prefix); i < index.sorted.length; i += 1) {
+    const candidate = index.sorted[i];
+    if (!candidate.startsWith(prefix)) break;
+    out.push(candidate);
+    if (out.length >= cap) break;
+  }
+  return out;
+}
+
+/** Resolve one query token at the cheapest tier that matches anything. */
+function resolveToken(index, token) {
+  if (index.postings.has(token)) {
+    return { token, tier: 'exact', matches: [token] };
+  }
+
+  const stemMatches = index.stems.get(stemToken(token));
+  if (stemMatches && stemMatches.length > 0) {
+    return { token, tier: 'stem', matches: stemMatches };
+  }
+
+  // Forward: the token is a prefix of bank words (ordinary typeahead).
+  const prefixMatches = withPrefix(index, token, PREFIX_MATCH_CAP);
+  // Reverse: the token is longer than the bank word it should match. Checking
+  // the token's own prefixes costs O(length), not a vocabulary scan. The stem
+  // must be a substantial share of what was typed — otherwise a short unrelated
+  // word stands in for a long mistyped one and the typo tier never gets to fix it.
+  const shortestUseful = Math.max(4, Math.ceil(token.length * 0.6));
+  for (let cut = token.length - 1; cut >= shortestUseful; cut -= 1) {
+    const shorter = token.slice(0, cut);
+    if (index.postings.has(shorter)) {
+      prefixMatches.push(shorter);
+      break;
+    }
+  }
+  if (prefixMatches.length > 0) {
+    return { token, tier: 'prefix', matches: prefixMatches };
+  }
+
+  const budget = maxEdits(token.length);
+  if (budget > 0) {
+    let best = budget + 1;
+    let fuzzy = [];
+    for (let length = token.length - budget; length <= token.length + budget; length += 1) {
+      const bucket = index.byLength.get(length);
+      if (!bucket) continue;
+      for (const candidate of bucket) {
+        const distance = editDistance(token, candidate, budget);
+        if (distance > budget) continue;
+        if (distance < best) {
+          best = distance;
+          fuzzy = [candidate];
+        } else if (distance === best) {
+          fuzzy.push(candidate);
+        }
+      }
+    }
+    if (fuzzy.length > 0) return { token, tier: 'fuzzy', matches: fuzzy };
+  }
+
+  return null;
+}
+
+function contiguousRunStart(tokens, queryTokens) {
+  for (let start = 0; start + queryTokens.length <= tokens.length; start += 1) {
+    let matched = true;
+    for (let i = 0; i < queryTokens.length; i += 1) {
+      if (!tokens[start + i].startsWith(queryTokens[i])) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) return start;
+  }
+  return -1;
+}
+
+/**
+ * Rank the bank against a query.
+ * @param index result of buildIndex
+ * @param query raw user input
+ * @param options {subject, limit, allowApproximate}
+ * @returns ranked hits, highest score first; `approximate` marks near misses
+ */
+function search(index, query, options = {}) {
+  const { subject = null, limit = 8, allowApproximate = true } = options;
+
+  const queryNorm = normalizeQuestion(query);
+  if (queryNorm.length === 0) return [];
+  const queryTokens = queryNorm.split(' ');
+
+  const resolved = [];
+  let noise = 0;
+  for (const token of queryTokens) {
+    const match = resolveToken(index, token);
+    if (match === null) {
+      noise += 1;
+      continue;
+    }
+    match.idf = Math.max(...match.matches.map((m) => index.idf.get(m) ?? 0));
+    resolved.push(match);
+  }
+  if (resolved.length === 0) return [];
+
+  const maxIdf = Math.max(...resolved.map((item) => item.idf));
+  const required = resolved.map(
+    (item) => !STOPWORDS.has(item.token) && item.idf >= REQUIRED_IDF_RATIO * maxIdf
+  );
+
+  // Per document: the best evidence found for each query token. Coverage is
+  // tracked separately from score so that an answer-only or fuzzy match still
+  // counts as "this token was found", while scoring less.
+  const docs = index.docs;
+  const accumulator = new Map();
+  const reach = (docIndex) => {
+    let record = accumulator.get(docIndex);
+    if (!record) {
+      record = {
+        coverage: new Float64Array(resolved.length),
+        score: new Float64Array(resolved.length),
+        terms: new Set(),
+        atFirst: new Set(),
+        atLast: new Set(),
+      };
+      accumulator.set(docIndex, record);
+    }
+    return record;
+  };
+
+  resolved.forEach((item, qi) => {
+    const tierWeight = TIER_WEIGHT[item.tier];
+    for (const vocabToken of item.matches) {
+      const weight = index.idf.get(vocabToken) ?? 0;
+      const record = index.postings.get(vocabToken);
+      if (!record) continue;
+
+      for (const docIndex of record.q) {
+        const slot = reach(docIndex);
+        if (weight > slot.coverage[qi]) slot.coverage[qi] = weight;
+
+        const doc = docs[docIndex];
+        let position = 1;
+        if (doc.firstAnchors.has(vocabToken)) {
+          position = FIRST_ANCHOR_BOOST;
+          slot.atFirst.add(qi);
+        }
+        if (doc.lastAnchors.has(vocabToken)) {
+          position = Math.max(position, LAST_ANCHOR_BOOST);
+          slot.atLast.add(qi);
+        }
+
+        const scored = weight * tierWeight * position;
+        if (scored > slot.score[qi]) slot.score[qi] = scored;
+        slot.terms.add(vocabToken);
+      }
+      for (const docIndex of record.a) {
+        const slot = reach(docIndex);
+        if (weight > slot.coverage[qi]) slot.coverage[qi] = weight;
+        const scored = weight * tierWeight * ANSWER_WEIGHT;
+        if (scored > slot.score[qi]) slot.score[qi] = scored;
+        slot.terms.add(vocabToken);
+      }
+    }
+  });
+
+  const noiseFactor = Math.pow(NOISE_PENALTY, noise);
+
+  const collect = (enforceRequired) => {
+    const found = [];
+    for (const [docIndex, record] of accumulator) {
+      const doc = index.docs[docIndex];
+      if (subject !== null && doc.entry.subject !== subject) continue;
+
+      if (enforceRequired) {
+        let complete = true;
+        for (let qi = 0; qi < resolved.length; qi += 1) {
+          if (required[qi] && record.coverage[qi] === 0) {
+            complete = false;
+            break;
+          }
+        }
+        if (!complete) continue;
+      }
+
+      let mass = 0;
+      for (let qi = 0; qi < resolved.length; qi += 1) mass += record.score[qi];
+      if (mass <= 0) continue;
+
+      // Length normalisation: the same evidence in a short stem is stronger
+      // than in a long one, replacing a token-count tie-break.
+      let score = mass / (0.6 + 0.4 * (doc.qTokens.length / index.avgLength));
+
+      if (doc.qNorm.startsWith(queryNorm)) score *= 1.8;
+
+      // First word and last word, middle skipped: treat as strong identification
+      // even though the words are not adjacent in the stem.
+      if (
+        resolved.length >= 2 &&
+        record.atFirst.has(0) &&
+        record.atLast.has(resolved.length - 1)
+      ) {
+        score *= BOOKEND_BOOST;
+      }
+
+      const runStart = contiguousRunStart(doc.qTokens, queryTokens);
+      if (runStart === 0) score *= 1.35;
+      else if (runStart > 0) score *= 1.2;
+
+      score *= noiseFactor;
+      found.push({ entry: doc.entry, score, terms: [...record.terms], approximate: !enforceRequired });
+    }
+
+    found.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.entry.question.length - b.entry.question.length;
+    });
+    return found;
+  };
+
+  const strict = collect(true);
+  if (strict.length > 0) return strict.slice(0, limit);
+  if (!allowApproximate) return [];
+
+  // Nothing satisfied every content word. Rather than a dead end, offer the
+  // closest entries, clearly marked so the top hit is never mistaken for one.
+  return collect(false).slice(0, Math.min(3, limit));
+}
+
+// Conyso Recall — standalone UI. No server, no network, no disk.
+// The bank lives in this tab only; sessionStorage keeps it across a reload and
+// drops it when the tab closes.
+
+const SESSION_KEY = 'conyso-recall';
+const $ = (id) => document.getElementById(id);
+
+const state = {
+  entries: [],
+  batches: [],
+  nextEntryId: 1,
+  nextBatchId: 1,
+  index: buildIndex([]),
+  subject: null,
+  hits: [],
+  cursor: 0,
+  preview: null,
+};
+
+// ---------------------------------------------------------------- session
+
+function loadSession() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    state.entries = saved.entries ?? [];
+    state.batches = saved.batches ?? [];
+    state.nextEntryId = saved.nextEntryId ?? 1;
+    state.nextBatchId = saved.nextBatchId ?? 1;
+  } catch (error) {
+    // Storage blocked (private window, file:// restrictions). Stay in memory.
+  }
+}
+
+function saveSession() {
+  try {
+    sessionStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        entries: state.entries,
+        batches: state.batches,
+        nextEntryId: state.nextEntryId,
+        nextBatchId: state.nextBatchId,
+      })
+    );
+  } catch (error) {
+    // Over quota or blocked: the in-memory bank still works for this tab.
+  }
+}
+
+const reindex = () => {
+  state.index = buildIndex(state.entries);
+};
+
+const subjectsInBank = () =>
+  [...new Set(state.entries.map((entry) => entry.subject).filter(Boolean))].sort();
+
+// ---------------------------------------------------------------- helpers
+
+const escapeHtml = (text) =>
+  String(text).replace(/[&<>"']/g, (ch) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])
+  );
+
+function highlight(question, query, terms) {
+  // Highlight what actually matched, not just what was typed: a stem or typo
+  // match lands on a different word from the one in the query box.
+  const parts = [...new Set([...tokenize(query), ...(terms ?? [])])].filter(Boolean);
+  if (parts.length === 0) return escapeHtml(question);
+  const pattern = parts
+    .map((token) => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .sort((a, b) => b.length - a.length)
+    .join('|');
+  return escapeHtml(question).replace(new RegExp('(' + pattern + ')', 'gi'), '<mark>$1</mark>');
+}
+
+
+/**
+ * How many leading words every displayed question shares. When a handful of
+ * entries open with the same boilerplate, the eye should land on what differs,
+ * not re-read the identical run each time.
+ */
+function commonPrefixWords(questions) {
+  if (questions.length < 2) return 0;
+  const split = questions.map((q) => q.trim().split(/\s+/));
+  const shortest = Math.min(...split.map((words) => words.length));
+  let shared = 0;
+  // Never elide a question down to nothing.
+  while (shared < shortest - 1) {
+    const word = split[0][shared].toLowerCase();
+    if (!split.every((words) => words[shared].toLowerCase() === word)) break;
+    shared += 1;
+  }
+  return shared;
+}
+
+// ---------------------------------------------------------------- lookup
+
+function renderResults() {
+  const box = $('results');
+  const query = $('q').value;
+
+  if (query.trim().length === 0) {
+    box.innerHTML =
+      '<p class="empty">' +
+      (state.entries.length === 0
+        ? 'Bank is empty. Open the Bank tab and paste a batch to begin.'
+        : state.entries.length + ' entries loaded. Start typing.') +
+      '</p>';
+    return;
+  }
+
+  if (state.hits.length === 0) {
+    box.innerHTML = '<p class="empty">No match in the bank.</p>';
+    return;
+  }
+
+  const note = state.hits[0].approximate
+    ? '<p class="approx-note">No exact match. Closest entries in the bank:</p>'
+    : '';
+
+  const questions = state.hits.map((hit) => hit.entry.question);
+  const shared = commonPrefixWords(questions);
+  const sharedText = shared >= 2 ? questions[0].trim().split(/\s+/).slice(0, shared).join(' ') : '';
+  const sharedNote = sharedText
+    ? '<p class="shared-stem">' + highlight(sharedText, query, state.hits[0].terms) + ' &hellip;</p>'
+    : '';
+
+  box.innerHTML = note + sharedNote + state.hits
+    .map((hit, i) => {
+      const subject = hit.entry.subject
+        ? '<span class="tag">' + escapeHtml(hit.entry.subject) + '</span>'
+        : '';
+      const shown = sharedText
+        ? '&hellip; ' + highlight(hit.entry.question.trim().split(/\s+/).slice(shared).join(' '), query, hit.terms)
+        : highlight(hit.entry.question, query, hit.terms);
+      return (
+        '<article class="hit' + (i === state.cursor ? ' is-top' : '') + '" data-pick="' + i + '">' +
+        '<div class="q"><span class="num">' + (i + 1) + '</span>' + shown + subject + '</div>' +
+        '<div class="a">' + escapeHtml(hit.entry.answer) + '</div>' +
+        '</article>'
+      );
+    })
+    .join('');
+}
+
+function runSearch() {
+  state.hits = search(state.index, $('q').value, { subject: state.subject, limit: 8 });
+  state.cursor = 0;
+  renderResults();
+}
+
+function renderChips() {
+  const box = $('subject-chips');
+  const subjects = subjectsInBank();
+  if (subjects.length === 0) {
+    box.innerHTML = '';
+    return;
+  }
+  const chip = (label, value) =>
+    '<button class="chip' + (state.subject === value ? ' is-active' : '') + '" data-subject="' +
+    (value === null ? '' : escapeHtml(value)) + '">' + escapeHtml(label) + '</button>';
+
+  box.innerHTML = chip('All', null) + subjects.map((s) => chip(s, s)).join('');
+}
+
+// ---------------------------------------------------------------- bank
+
+function renderBatches() {
+  const box = $('batches');
+  if (state.batches.length === 0) {
+    box.innerHTML = '<p class="empty">Nothing imported in this session yet.</p>';
+    return;
+  }
+  box.innerHTML = state.batches
+    .map((batch) => {
+      const remaining = state.entries.filter((entry) => entry.batchId === batch.id).length;
+      return (
+        '<div class="batch"><div><strong>' + remaining + ' entries</strong>' +
+        '<small>' + escapeHtml(batch.subject ?? 'untagged') + ' &middot; ' +
+        new Date(batch.createdAt).toLocaleTimeString() + '</small></div>' +
+        '<button data-rollback="' + batch.id + '">Roll back</button></div>'
+      );
+    })
+    .join('');
+}
+
+function renderPreview() {
+  const box = $('preview');
+  if (!state.preview) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+
+  const { counts, records, problems, convention } = state.preview;
+
+  const rows = records
+    .map((record, i) => {
+      const conflict = record.conflict
+        ? '<span class="conflict">already in the ' + record.conflict.where + ': &ldquo;' +
+          escapeHtml(record.conflict.existingAnswer) + '&rdquo;</span>'
+        : '';
+      return (
+        '<tr><td><input type="checkbox" data-row="' + i + '"' + (record.include ? ' checked' : '') + '></td>' +
+        '<td class="status"><span class="pill ' + record.status + '">' + record.status + '</span></td>' +
+        '<td>' + escapeHtml(record.question) + '</td>' +
+        '<td>' + escapeHtml(record.answer) + conflict + '</td></tr>'
+      );
+    })
+    .join('');
+
+  const problemList = problems.length
+    ? '<div class="problems"><h3>' + problems.length + ' line' +
+      (problems.length === 1 ? '' : 's') + ' could not be read</h3><ul>' +
+      problems
+        .map(
+          (problem) =>
+            '<li>line ' + problem.line + ': ' + escapeHtml(problem.reason) +
+            ' &mdash; <code>' + escapeHtml(problem.text.slice(0, 110)) + '</code></li>'
+        )
+        .join('') + '</ul></div>'
+    : '';
+
+  const selected = records.filter((record) => record.include).length;
+
+  box.innerHTML =
+    '<h2>Preview &mdash; nothing added yet</h2>' +
+    '<div class="summary">' +
+    '<span>Read as <b>' + convention + '</b></span>' +
+    '<span><span class="pill new">new</span> <b>' + counts.new + '</b></span>' +
+    '<span><span class="pill duplicate">duplicate</span> <b>' + counts.duplicate + '</b></span>' +
+    '<span><span class="pill contradiction">contradiction</span> <b>' + counts.contradiction + '</b></span>' +
+    '</div>' +
+    '<div class="actions">' +
+    '<button id="btn-commit" class="primary">Add ' + selected + ' selected</button>' +
+    '<button id="btn-only-new">Select only new</button>' +
+    '<button id="btn-all">Select all</button>' +
+    '</div>' + problemList +
+    '<table><thead><tr><th></th><th>Status</th><th>Question</th><th>Correct answer</th></tr></thead>' +
+    '<tbody>' + rows + '</tbody></table>';
+}
+
+function renderAll() {
+  const count = state.entries.length;
+  $('bank-count').textContent = count + (count === 1 ? ' entry' : ' entries');
+  renderChips();
+  renderBatches();
+  renderPreview();
+  runSearch();
+}
+
+// ---------------------------------------------------------------- actions
+
+function doPreview() {
+  const text = $('paste').value;
+  if (text.trim().length === 0) return;
+
+  const convention = $('convention').value;
+  const parsed = parseBank(text, convention ? { convention } : {});
+  const existing = state.entries.map((entry) => ({
+    question_norm: normalizeQuestion(entry.question),
+    answer: entry.answer,
+  }));
+  const { records, counts } = analyzeImport(parsed.entries, existing);
+
+  // Duplicates and contradictions start unticked: adding one is deliberate.
+  state.preview = {
+    convention: parsed.convention,
+    problems: parsed.problems,
+    counts,
+    records: records.map((record) => ({ ...record, include: record.status === 'new' })),
+  };
+  renderPreview();
+}
+
+function doCommit() {
+  const chosen = state.preview.records.filter((record) => record.include);
+  if (chosen.length === 0) return;
+
+  const subject = $('subject').value.trim() || null;
+  const batchId = state.nextBatchId++;
+  state.batches.unshift({ id: batchId, subject, createdAt: new Date().toISOString() });
+
+  for (const record of chosen) {
+    state.entries.push({
+      id: state.nextEntryId++,
+      subject,
+      question: record.question,
+      answer: record.answer,
+      batchId,
+    });
+  }
+
+  state.preview = null;
+  $('paste').value = '';
+  reindex();
+  saveSession();
+  renderAll();
+  document.querySelector('.tab[data-screen="lookup"]').click();
+}
+
+function bankAsText() {
+  return state.entries.map((entry) => 'Q: ' + entry.question + '\nA: ' + entry.answer).join('\n');
+}
+
+async function copyBank() {
+  if (state.entries.length === 0) return;
+  const text = bankAsText();
+
+  try {
+    await navigator.clipboard.writeText(text);
+    flash($('btn-copy'), 'Copied');
+    return;
+  } catch (error) {
+    // Clipboard API is unavailable on some file:// origins; fall back.
+  }
+
+  const scratch = document.createElement('textarea');
+  scratch.value = text;
+  scratch.setAttribute('readonly', '');
+  scratch.style.position = 'fixed';
+  scratch.style.opacity = '0';
+  document.body.appendChild(scratch);
+  scratch.select();
+  const copied = document.execCommand('copy');
+  document.body.removeChild(scratch);
+  flash($('btn-copy'), copied ? 'Copied' : 'Press Cmd+C');
+}
+
+function flash(button, message) {
+  const original = button.textContent;
+  button.textContent = message;
+  setTimeout(() => {
+    button.textContent = original;
+  }, 1400);
+}
+
+// ---------------------------------------------------------------- wiring
+
+$('q').addEventListener('input', runSearch);
+
+$('q').addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    if (state.hits.length === 0) return;
+    const step = event.key === 'ArrowDown' ? 1 : -1;
+    state.cursor = (state.cursor + step + state.hits.length) % state.hits.length;
+    renderResults();
+  }
+  if (event.key === 'Escape') {
+    $('q').value = '';
+    runSearch();
+  }
+  // Jump straight to a numbered result instead of arrowing to it.
+  if (/^[1-9]$/.test(event.key) && event.altKey) {
+    const wanted = Number(event.key) - 1;
+    if (wanted < state.hits.length) {
+      event.preventDefault();
+      state.cursor = wanted;
+      renderResults();
+    }
+  }
+});
+
+$('results').addEventListener('click', (event) => {
+  const card = event.target.closest('[data-pick]');
+  if (!card) return;
+  state.cursor = Number(card.dataset.pick);
+  renderResults();
+});
+
+$('subject-chips').addEventListener('click', (event) => {
+  const chip = event.target.closest('.chip');
+  if (!chip) return;
+  state.subject = chip.dataset.subject === '' ? null : chip.dataset.subject;
+  renderChips();
+  runSearch();
+});
+
+document.querySelector('.tabs').addEventListener('click', (event) => {
+  const tab = event.target.closest('.tab');
+  if (!tab) return;
+  document.querySelectorAll('.tab').forEach((el) => el.classList.toggle('is-active', el === tab));
+  document.querySelectorAll('.screen').forEach((el) => {
+    el.classList.toggle('is-active', el.id === 'screen-' + tab.dataset.screen);
+  });
+  if (tab.dataset.screen === 'lookup') $('q').focus();
+});
+
+$('btn-preview').addEventListener('click', doPreview);
+
+$('btn-clear').addEventListener('click', () => {
+  $('paste').value = '';
+  state.preview = null;
+  renderPreview();
+});
+
+$('btn-copy').addEventListener('click', copyBank);
+
+$('btn-wipe').addEventListener('click', () => {
+  if (state.entries.length === 0) return;
+  if (!confirm('Empty the bank for this session? Copy it first if you want it back.')) return;
+  state.entries = [];
+  state.batches = [];
+  state.preview = null;
+  reindex();
+  saveSession();
+  renderAll();
+});
+
+$('preview').addEventListener('click', (event) => {
+  const target = event.target;
+  if (target.id === 'btn-commit') doCommit();
+  if (target.id === 'btn-only-new' || target.id === 'btn-all') {
+    const onlyNew = target.id === 'btn-only-new';
+    state.preview.records = state.preview.records.map((record) => ({
+      ...record,
+      include: onlyNew ? record.status === 'new' : true,
+    }));
+    renderPreview();
+  }
+});
+
+$('preview').addEventListener('change', (event) => {
+  const row = event.target.dataset.row;
+  if (row === undefined) return;
+  state.preview.records[Number(row)].include = event.target.checked;
+  renderPreview();
+});
+
+$('batches').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-rollback]');
+  if (!button) return;
+  const batchId = Number(button.dataset.rollback);
+  if (!confirm('Roll back this import? Its entries leave the bank.')) return;
+  state.entries = state.entries.filter((entry) => entry.batchId !== batchId);
+  state.batches = state.batches.filter((batch) => batch.id !== batchId);
+  reindex();
+  saveSession();
+  renderAll();
+});
+
+loadSession();
+reindex();
+renderAll();
+$('q').focus();
+</script>
+</body>
+</html>

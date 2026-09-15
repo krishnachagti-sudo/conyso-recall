@@ -1,0 +1,70 @@
+# Conyso Recall
+
+Instant lookup over a question-and-answer bank you supply yourself.
+
+**[Open it →](https://krishnachagti-sudo.github.io/conyso-recall/)**
+
+Paste your bank once, then type a few words of any question and its answer is on
+screen. One self-contained HTML page: no account, no server, no build step, and
+nothing stored or transmitted anywhere.
+
+Recall is a reference and authoring tool **for the person who owns the answer
+key** — auditing a bank for defects, and reading from a bank while running a quiz
+for other people. It does not capture the screen, run OCR, read another
+application's window, or deliver answers to a second device. Questions reach it
+by being typed.
+
+## The bank
+
+Paste it in whichever shape your source already has; the parser works out which
+convention dominates:
+
+| Format | Example |
+|---|---|
+| `Q:` / `A:` blocks | `Q: What is kaizen?` then `A: Continuous improvement` |
+| Pipe | `What is kaizen? \| Continuous improvement` |
+| Tab | `What is kaizen?<TAB>Continuous improvement` |
+| Alternating lines | question on one line, answer on the next |
+
+Import is two-phase. **Preview writes nothing**: it shows what was parsed, lists
+unreadable lines by line number, and marks each record *new*, *duplicate*, or
+*contradiction* — the same question carrying a different answer, which in an
+answer key is a defect rather than a repeat. Contradictions are left unticked, so
+adding one is deliberate. Each import can be rolled back as a unit.
+
+The bank is **session-scoped**: it lives in the tab, survives a reload, and is
+gone when you close it. *Copy bank* hands it back as text to paste into a fresh
+session. Nothing is written to disk and nothing leaves the page.
+
+## Lookup
+
+Matching is tiered per word — exact, then stem (`wastes` finds `waste`), then
+prefix, then typo (`kiazen` and `kaizne` both find *kaizen*). A word you typed
+correctly is never reinterpreted as a typo of something else, so typing well
+keeps the precision of exact matching.
+
+- Function words are optional, so `what is takt time` finds *"Define takt time"*.
+- Matched words are weighted by rarity, so a distinctive term beats the
+  boilerplate every stem shares.
+- Answers are searchable too, at lower weight than questions.
+- A word at the start or end of a stem outscores the same word mid-sentence, and
+  typing the **first word and the last word** is treated as near-certain
+  identification.
+
+One word usually cannot identify a question by itself. Measured on a real
+447-card deck, the first word ranks the right answer first 47% of the time and
+first+last 83%. So when results share opening words, the shared run is printed
+once and each result shows only the part that differs, numbered, with every
+answer already visible.
+
+Arrow keys walk results, Alt+1–9 jump to one, Escape clears.
+
+## Building
+
+`index.html` is generated, not hand-written. The source lives with the project's
+logic modules, which carry the test suite, and a build step inlines them so the
+page cannot drift into a second, untested copy of the parser and the ranker.
+
+## Licence
+
+AGPL-3.0-or-later.
