@@ -26,6 +26,23 @@ convention dominates:
 | Tab | `What is kaizen?<TAB>Continuous improvement` |
 | Alternating lines | question on one line, answer on the next |
 
+Multiple-choice questions keep their options, so you can find a question by
+typing **any of its choices**, distractors included:
+
+```
+Q: Which of the following is a lean waste?
+A) Motion
+B) Kaizen
+C) Gemba
+Answer: A
+```
+
+Options can be `A)`, `(a)`, `A.` or `1)`, one per line or inline, and the answer
+can be the letter or the text. In a spreadsheet: `Question | A | B | C | D | Answer`.
+An answer that is not one of its own options is flagged. Because MCQ banks reuse
+boilerplate stems, the same stem with different options counts as a different
+question, not a contradiction.
+
 Import is two-phase. **Preview writes nothing**: it shows what was parsed, lists
 unreadable lines by line number, and marks each record *new*, *duplicate*, or
 *contradiction* — the same question carrying a different answer, which in an
@@ -46,7 +63,7 @@ keeps the precision of exact matching.
 - Function words are optional, so `what is takt time` finds *"Define takt time"*.
 - Matched words are weighted by rarity, so a distinctive term beats the
   boilerplate every stem shares.
-- Answers are searchable too, at lower weight than questions.
+- Options and answers are searchable too, at lower weight than the question.
 - A word at the start or end of a stem outscores the same word mid-sentence, and
   typing the **first word and the last word** is treated as near-certain
   identification.
@@ -57,7 +74,15 @@ first+last 83%. So when results share opening words, the shared run is printed
 once and each result shows only the part that differs, numbered, with every
 answer already visible.
 
-Arrow keys walk results, Alt+1–9 jump to one, Escape clears.
+| Key | Does |
+|---|---|
+| Esc | Clears the box for the next question, wherever focus is |
+| Enter | Keeps the answer on screen; your next keystroke starts a fresh question |
+| typing anywhere | Starts a new question even if the cursor is not in the box |
+| ↑ ↓ | Move through results |
+| Alt+1–9 | Jump to a numbered result (Option on a Mac) |
+
+On a phone, the × in the search box clears it.
 
 ## Building
 

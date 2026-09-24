@@ -195,6 +195,22 @@ td.status { white-space: nowrap; }
   .kbd-hint { display: none; }
   .tap-hint { display: inline; }
 }
+
+/* Multiple-choice options: one compact line under the stem. */
+.opts {
+  display: flex; flex-wrap: wrap; gap: 3px 14px; margin-top: 6px;
+  font-size: 13px; color: var(--ink-soft);
+}
+.opt b { font-size: 11px; font-weight: 600; margin-right: 2px; opacity: 0.75; }
+.opt.is-correct { color: var(--accent); font-weight: 600; }
+.opt.is-correct b { opacity: 1; }
+td .opts { font-size: 12px; margin-top: 4px; }
+
+kbd {
+  display: inline-block; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 0 5px; margin: 0 1px; border: 1px solid var(--line); border-bottom-width: 2px;
+  border-radius: 4px; background: var(--panel); color: var(--ink);
+}
 </style>
 </head>
 <body>
@@ -213,7 +229,7 @@ td.status { white-space: nowrap; }
            autocomplete="off" spellcheck="false" autofocus>
     <div id="subject-chips" class="chips"></div>
     <div id="results" class="results" aria-live="polite"></div>
-    <p class="hint">Results rank as you type. <span class="kbd-hint">Arrow keys move through them, Alt+1&ndash;9 jump, Escape clears.</span><span class="tap-hint">Tap a result to select it.</span></p>
+    <p class="hint">Results rank as you type. <span class="kbd-hint"><kbd>Esc</kbd> clears for the next question &middot; <kbd>Enter</kbd> keeps the answer up until you type again &middot; <kbd>&uarr;</kbd><kbd>&darr;</kbd> move &middot; <kbd>Alt</kbd>+<kbd>1</kbd>&ndash;<kbd>9</kbd> jump</span><span class="tap-hint">Tap the &times; in the box to clear it for the next question.</span></p>
   </section>
 
   <section id="screen-bank" class="screen">
@@ -291,12 +307,34 @@ function tokenize(text) {
 // ---------------------------------------------------------- parse.js
 // Bulk-paste parser: raw pasted text -> question/answer records.
 // Pure: no I/O, no database, no HTTP. The only module that knows paste formats.
+//
+// Every record is {question, answer, options, line}. `options` is the list of
+// choices for a multiple-choice question and is empty for a plain Q/A pair.
+// A record may also carry `warning` when it parsed but looks wrong — an answer
+// that is not among its own options, say. Warnings never drop a record.
 
-const QUESTION_PREFIX = /^\s*(?:q|ques|question)\s*[:.)\-]\s*/i;
-const ANSWER_PREFIX = /^\s*(?:a|ans|answer|correct\s*answer)\s*[:.)\-]\s*/i;
+
+const QUESTION_PREFIX = /^\s*(?:q|ques|question)\s*\d*\s*[:.)\-]\s*/i;
 const LEADING_NUMBER = /^\s*\(?\d+\)?\s*[.):\-]\s*/;
 
-const CONVENTIONS = ['qa', 'tab', 'pipe', 'alternating'];
+// Kept for plain Q/A and delimited answers: "A: x", "A. x", "Ans - x".
+const LEGACY_ANSWER_PREFIX = /^\s*(?:a|ans|answer|correct\s*answer)\s*[:.)\-]\s*/i;
+
+// An option label is a letter or digit closed by ")" or "." and followed by
+// text: "A) x", "(b) x", "3. x". A colon is deliberately not accepted, so that
+// "A: x" stays an answer and never collides with option A.
+const OPTION_LABEL = /^\s*(\()?([A-Ha-h]|[1-8])\s*([).])\s+(\S.*)$/;
+
+// An answer line names itself: "Answer: B", "Ans. b", "Correct: Kaizen",
+// "Key - C", or the plain-Q/A form "A: text" / "A - text".
+const ANSWER_WORD = /^\s*(?:ans(?:wer)?|correct(?:\s*(?:answer|option))?|key|solution)\s*[:.)\-]\s*/i;
+const ANSWER_BARE_LABEL = /^\s*ans(?:wer)?\s+\(?[A-Ha-h1-8]\)?\s*$/i;
+const ANSWER_A_COLON = /^\s*a\s*[:\-]\s*/i;
+
+const CONVENTIONS = ['qa', 'mcq', 'tab', 'pipe', 'alternating'];
+
+const HEADER_QUESTION = new Set(['question', 'questions', 'q', 'stem']);
+const HEADER_ANSWER = new Set(['answer', 'ans', 'correct', 'correct answer', 'key']);
 
 function stripQuestionNoise(text) {
   let out = String(text).trim();
@@ -306,7 +344,107 @@ function stripQuestionNoise(text) {
 }
 
 function stripAnswerNoise(text) {
-  return String(text).trim().replace(ANSWER_PREFIX, '').trim();
+  return String(text).trim().replace(LEGACY_ANSWER_PREFIX, '').trim();
+}
+
+function stripOptionLabel(text) {
+  const match = OPTION_LABEL.exec(text);
+  return (match ? match[4] : String(text)).trim();
+}
+
+const isAnswerLine = (line) =>
+  ANSWER_WORD.test(line) || ANSWER_BARE_LABEL.test(line) || ANSWER_A_COLON.test(line);
+
+function stripAnswerLine(line) {
+  if (ANSWER_BARE_LABEL.test(line)) return line.replace(/^\s*ans(?:wer)?\s+/i, '').trim();
+  if (ANSWER_WORD.test(line)) return line.replace(ANSWER_WORD, '').trim();
+  return line.replace(ANSWER_A_COLON, '').trim();
+}
+
+/** A = 0, b = 1, 3 = 2. */
+function labelIndex(label) {
+  if (/^[1-8]$/.test(label)) return Number(label) - 1;
+  return label.toLowerCase().charCodeAt(0) - 97;
+}
+
+function parseOptionLine(line) {
+  const match = OPTION_LABEL.exec(line);
+  if (!match) return null;
+  const [, open = '', label, close, text] = match;
+  const style = /[1-8]/.test(label) ? 'digit' : label === label.toUpperCase() ? 'upper' : 'lower';
+  return { index: labelIndex(label), open, close, style, text };
+}
+
+function labelFor(style, index) {
+  if (style === 'digit') return String(index + 1);
+  const letter = String.fromCharCode(97 + index);
+  return style === 'upper' ? letter.toUpperCase() : letter;
+}
+
+/**
+ * "(A) Motion (B) Kaizen (C) Gemba" -> ["Motion", "Kaizen", "Gemba"].
+ * Later labels must use the same bracket style and case as the first, so an
+ * option reading "Plan B. Execute it" is not cut at "B.".
+ */
+function splitInlineOptions(first) {
+  const out = [];
+  let rest = first.text;
+  for (let index = first.index + 1; index < 8; index += 1) {
+    const label = labelFor(first.style, index);
+    const pattern = new RegExp(
+      '(?:^|\\s)' + (first.open ? '\\(' : '') + label + (first.close === ')' ? '\\)' : '\\.') + '\\s+'
+    );
+    const found = pattern.exec(rest);
+    if (!found) break;
+    out.push(rest.slice(0, found.index).trim());
+    rest = rest.slice(found.index + found[0].length);
+  }
+  out.push(rest.trim());
+  return out;
+}
+
+const sameText = (a, b) => normalizeQuestion(a) === normalizeQuestion(b);
+
+/**
+ * Turn whatever the answer line said into the answer text. With options
+ * present, "B", "(b)", "Option B", "B) Kaizen" and "kaizen" all resolve to the
+ * option text. A literal match on an option wins over reading the answer as a
+ * label, so "4" among options 2/4/6/8 means the option "4", not option D.
+ */
+function resolveAnswer(raw, options) {
+  const text = String(raw).trim();
+  if (options.length === 0) return { answer: text };
+
+  const literal = options.findIndex((option) => sameText(option, text));
+  if (literal >= 0) return { answer: options[literal] };
+
+  const bare = /^\(?([A-Ha-h]|[1-8])\)?\.?$/.exec(text) || /^option\s*\(?([A-Ha-h]|[1-8])\)?\.?$/i.exec(text);
+  if (bare) {
+    const index = labelIndex(bare[1]);
+    if (index < options.length) return { answer: options[index] };
+    return {
+      answer: text,
+      warning: `answer points to option ${bare[1].toUpperCase()} but there are only ${options.length} options`,
+    };
+  }
+
+  const labelled = /^\(?([A-Ha-h]|[1-8])[).:]\s+(.+)$/.exec(text);
+  if (labelled) {
+    const spelled = labelled[2].trim();
+    const byText = options.findIndex((option) => sameText(option, spelled));
+    if (byText >= 0) return { answer: options[byText] };
+    return { answer: spelled, warning: 'answer is not one of the options' };
+  }
+
+  return { answer: text, warning: 'answer is not one of the options' };
+}
+
+function isHeaderRow(fields) {
+  return (
+    fields.length >= 2 &&
+    HEADER_QUESTION.has(normalizeQuestion(fields[0])) &&
+    HEADER_ANSWER.has(normalizeQuestion(fields[fields.length - 1]))
+  );
 }
 
 /**
@@ -322,10 +460,13 @@ function detectConvention(lines) {
   let answerLines = 0;
   let pipeLines = 0;
   let tabLines = 0;
+  let mcqBlocks = 0;
+  let optionLines = 0;
+  let run = 0;
 
   for (const line of nonEmpty) {
     if (QUESTION_PREFIX.test(line)) questionLines += 1;
-    if (ANSWER_PREFIX.test(line)) answerLines += 1;
+    if (LEGACY_ANSWER_PREFIX.test(line) || isAnswerLine(line)) answerLines += 1;
 
     const tabIndex = line.indexOf('\t');
     if (tabIndex > 0 && line.slice(tabIndex + 1).trim().length > 0) tabLines += 1;
@@ -338,11 +479,31 @@ function detectConvention(lines) {
     ) {
       pipeLines += 1;
     }
+
+    // An MCQ block is a run of two or more sequentially labelled options
+    // followed by an answer line. Continuation lines do not break the run.
+    const option = parseOptionLine(line);
+    if (option) optionLines += 1;
+    if (option && option.index === run) run += splitInlineOptions(option).length;
+    else if (option && option.index === 0) run = splitInlineOptions(option).length;
+    else if (isAnswerLine(line)) {
+      if (run >= 2) mcqBlocks += 1;
+      run = 0;
+    }
   }
 
+  // Structured formats are credited for every option line they explain.
+  // Without that, an MCQ block of six lines is outvoted by the alternating
+  // fallback, which scores by line count, and gets read as three Q/A pairs.
   const scores = {
     // A Q:/A: document needs both halves present, so score on the weaker one.
-    qa: Math.min(questionLines, answerLines) * 2,
+    qa: questionLines > 0 ? Math.min(questionLines, answerLines) * 2 + optionLines : 0,
+    // Unprefixed multiple choice ("1. stem / a) b) c) / Answer: b"). Only when
+    // nothing is Q:-prefixed; a prefixed document is read as qa, which handles
+    // options itself. Numbered lines alone are not enough: "1. stem / answer"
+    // is plain alternating, so a real option run followed by an answer is
+    // required before option lines count for anything.
+    mcq: questionLines === 0 && mcqBlocks > 0 ? mcqBlocks * 3 + optionLines : 0,
     tab: tabLines,
     pipe: pipeLines,
     // Weakest signal: always available, so it is the fallback.
@@ -359,86 +520,137 @@ function detectConvention(lines) {
 function parseDelimited(lines, delimiter) {
   const entries = [];
   const problems = [];
+  let seenContent = false;
 
   lines.forEach((raw, index) => {
     const line = raw.trim();
     if (line.length === 0) return;
+    const first = !seenContent;
+    seenContent = true;
 
-    const at = line.indexOf(delimiter);
-    if (at < 0) {
+    if (!line.includes(delimiter)) {
       problems.push({ line: index + 1, text: line, reason: 'no delimiter on this line' });
       return;
     }
 
-    const question = stripQuestionNoise(line.slice(0, at));
-    const answer = stripAnswerNoise(line.slice(at + 1));
+    const fields = line.split(delimiter).map((field) => field.trim());
+    if (first && isHeaderRow(fields)) return;
 
+    const question = stripQuestionNoise(fields[0]);
     if (question.length === 0) {
       problems.push({ line: index + 1, text: line, reason: 'question side is empty' });
       return;
     }
-    if (answer.length === 0) {
+
+    const last = fields[fields.length - 1];
+    if (last.length === 0) {
       problems.push({ line: index + 1, text: line, reason: 'answer side is empty' });
       return;
     }
-    entries.push({ question, answer, line: index + 1 });
+
+    // Two fields is a plain pair. More is "question | options... | answer".
+    if (fields.length === 2) {
+      entries.push({ question, answer: stripAnswerNoise(last), options: [], line: index + 1 });
+      return;
+    }
+
+    const options = fields.slice(1, -1).map(stripOptionLabel).filter((option) => option.length > 0);
+    const resolved = resolveAnswer(stripAnswerLine(last), options);
+    entries.push({ question, ...resolved, options, line: index + 1 });
   });
 
   return { entries, problems };
 }
 
-function parseQaBlocks(lines) {
+/**
+ * Block parser shared by the "qa" and "mcq" conventions. A block is a
+ * question, an optional run of labelled options, and an answer. The two
+ * conventions differ only in where a block starts: at a "Q:" line for qa, and
+ * at whatever follows the previous answer for mcq.
+ */
+function parseBlocks(lines, convention) {
   const entries = [];
   const problems = [];
+  const unprefixed = convention === 'mcq';
 
-  let question = [];
-  let answer = [];
-  let mode = null;
-  let questionLine = 0;
+  let block = null;
 
   const flush = () => {
-    const q = stripQuestionNoise(question.join(' '));
-    const a = stripAnswerNoise(answer.join(' '));
-    if (q.length === 0 && a.length === 0) return;
-    if (q.length === 0) {
-      problems.push({ line: questionLine, text: a, reason: 'answer with no question' });
-    } else if (a.length === 0) {
-      problems.push({ line: questionLine, text: q, reason: 'question with no answer' });
-    } else {
-      entries.push({ question: q, answer: a, line: questionLine });
+    if (block === null) return;
+    const current = block;
+    block = null;
+
+    const question = stripQuestionNoise(current.question.join(' '));
+    let options = current.options.map((option) => option.trim()).filter(Boolean);
+    let answerText = current.answer.join(' ').trim();
+
+    // Legacy: a lone "A. text" under a question, with no answer line, is the
+    // answer written in the old style, not a one-option MCQ.
+    if (answerText.length === 0 && options.length === 1 && current.firstLabelIndex === 0) {
+      answerText = options[0];
+      options = [];
     }
-    question = [];
-    answer = [];
-    mode = null;
+
+    if (question.length === 0 && answerText.length === 0 && options.length === 0) return;
+    if (question.length === 0) {
+      problems.push({ line: current.line, text: answerText, reason: 'answer with no question' });
+      return;
+    }
+    if (answerText.length === 0) {
+      problems.push({ line: current.line, text: question, reason: 'question with no answer' });
+      return;
+    }
+
+    const resolved = resolveAnswer(answerText, options);
+    entries.push({ question, ...resolved, options, line: current.line });
+  };
+
+  const open = (index, text) => {
+    block = { line: index + 1, question: [text], options: [], answer: [], state: 'q', firstLabelIndex: null };
   };
 
   lines.forEach((raw, index) => {
     const line = raw.trim();
+    if (line.length === 0) return;
 
     if (QUESTION_PREFIX.test(line)) {
       flush();
-      questionLine = index + 1;
-      question = [line];
-      mode = 'q';
+      open(index, line);
       return;
     }
 
-    if (ANSWER_PREFIX.test(line)) {
-      if (mode === null) {
-        problems.push({ line: index + 1, text: line, reason: 'answer with no question' });
+    if (block === null) {
+      if (unprefixed && !isAnswerLine(line)) {
+        open(index, line);
         return;
       }
-      answer = [line];
-      mode = 'a';
+      const reason = isAnswerLine(line) ? 'answer with no question' : 'text outside any Q/A block';
+      problems.push({ line: index + 1, text: line, reason });
       return;
     }
 
-    if (line.length === 0) return;
+    if (block.state !== 'a') {
+      const option = parseOptionLine(line);
+      if (option && option.index === block.options.length) {
+        if (block.firstLabelIndex === null) block.firstLabelIndex = option.index;
+        block.options.push(...splitInlineOptions(option));
+        block.state = 'o';
+        return;
+      }
+      if (isAnswerLine(line)) {
+        block.answer = [stripAnswerLine(line)];
+        block.state = 'a';
+        // Unprefixed blocks have no marker for the next question, so the
+        // answer line closes the block and the next line opens a new one.
+        if (unprefixed) flush();
+        return;
+      }
+    }
 
-    // Continuation of whichever half is open.
-    if (mode === 'q') question.push(line);
-    else if (mode === 'a') answer.push(line);
-    else problems.push({ line: index + 1, text: line, reason: 'text outside any Q/A block' });
+    // Continuation of whichever part is open.
+    if (block.state === 'q') block.question.push(line);
+    else if (block.state === 'o') block.options[block.options.length - 1] += ' ' + line;
+    else block.answer.push(line);
   });
 
   flush();
@@ -466,7 +678,7 @@ function parseAlternating(lines) {
       });
       continue;
     }
-    entries.push({ question, answer, line: kept[i].line });
+    entries.push({ question, answer, options: [], line: kept[i].line });
   }
 
   if (kept.length % 2 === 1) {
@@ -494,7 +706,8 @@ function parseBank(raw, options = {}) {
   let result;
   switch (convention) {
     case 'qa':
-      result = parseQaBlocks(lines);
+    case 'mcq':
+      result = parseBlocks(lines, convention);
       break;
     case 'tab':
       result = parseDelimited(lines, '\t');
@@ -510,6 +723,21 @@ function parseBank(raw, options = {}) {
   return { convention, ...result };
 }
 
+/**
+ * The inverse of parseBank: a bank as pasteable text. Used by "Copy bank", so
+ * a session can be carried into a fresh one with its options intact.
+ */
+function formatBank(entries) {
+  return entries
+    .map((entry) => {
+      const options = entry.options ?? [];
+      if (options.length === 0) return 'Q: ' + entry.question + '\nA: ' + entry.answer;
+      const lines = options.map((option, i) => String.fromCharCode(65 + i) + ') ' + option);
+      return 'Q: ' + entry.question + '\n' + lines.join('\n') + '\nAnswer: ' + entry.answer;
+    })
+    .join('\n\n');
+}
+
 // ---------------------------------------------------------- analyze.js
 // Duplicate and contradiction detection for an incoming import.
 // Pure: takes parsed records plus what is already in the bank, returns a verdict
@@ -520,25 +748,50 @@ function parseBank(raw, options = {}) {
 const sameAnswer = (a, b) => normalizeQuestion(a) === normalizeQuestion(b);
 
 /**
+ * Order-insensitive fingerprint of an option set, or null when there are no
+ * options. MCQ banks reuse boilerplate stems — "Which of the following is a
+ * lean waste?" can appear many times with different choices and different
+ * correct answers — so for multiple choice the options are part of what makes
+ * a question the same question.
+ */
+function optionsKey(options) {
+  if (!options || options.length === 0) return null;
+  return options.map(normalizeQuestion).sort().join('\u0001');
+}
+
+/**
+ * Two records describe the same question when their stems match and their
+ * option sets do not contradict that: identical sets, or at least one side
+ * with no options, in which case the stem is all there is to go on.
+ */
+const sameQuestion = (a, b) => a.key === null || b.key === null || a.key === b.key;
+
+/**
  * @param entries parsed records from parseBank
- * @param existing rows already in the bank, as {question_norm, answer}
+ * @param existing rows already in the bank, as {question_norm, answer, options}
  * @returns {{records: Array, counts: Object}}
  */
 function analyzeImport(entries, existing = []) {
   const seen = new Map();
 
-  const remember = (norm, answer, where) => {
+  const remember = (norm, answer, key, where) => {
     if (!seen.has(norm)) seen.set(norm, []);
-    seen.get(norm).push({ answer, where });
+    seen.get(norm).push({ answer, key, where });
   };
 
   for (const row of existing) {
-    remember(row.question_norm ?? normalizeQuestion(row.question), row.answer, 'bank');
+    remember(
+      row.question_norm ?? normalizeQuestion(row.question),
+      row.answer,
+      optionsKey(row.options),
+      'bank'
+    );
   }
 
   const records = entries.map((entry) => {
     const questionNorm = normalizeQuestion(entry.question);
-    const priors = seen.get(questionNorm) ?? [];
+    const key = optionsKey(entry.options);
+    const priors = (seen.get(questionNorm) ?? []).filter((prior) => sameQuestion(prior, { key }));
 
     let status = 'new';
     let conflict = null;
@@ -556,7 +809,7 @@ function analyzeImport(entries, existing = []) {
       }
     }
 
-    remember(questionNorm, entry.answer, 'paste');
+    remember(questionNorm, entry.answer, key, 'paste');
     return { ...entry, question_norm: questionNorm, status, conflict };
   });
 
@@ -597,6 +850,11 @@ const TIER_WEIGHT = { exact: 1, stem: 0.92, prefix: 0.85, fuzzy: 0.6 };
 // A term found only in the answer is real evidence but weaker than the same
 // term in the question, so a question match always outranks an answer match.
 const ANSWER_WEIGHT = 0.35;
+
+// Options sit between the two. Typing a choice you can see on screen is a
+// deliberate way in, and distractors identify a question as well as the correct
+// option does — but a word in the stem is still the stronger signal.
+const OPTION_WEIGHT = 0.6;
 
 // A token is required unless it is a stopword or clearly less informative than
 // the most distinctive token in the query.
@@ -708,6 +966,7 @@ function buildIndex(entries) {
       qNorm,
       qTokens,
       aTokens: tokenize(entry.answer ?? ''),
+      oTokens: tokenize((entry.options ?? []).join(' ')),
       firstAnchors,
       lastAnchors,
     };
@@ -717,7 +976,7 @@ function buildIndex(entries) {
   const add = (token, field, docIndex) => {
     let record = postings.get(token);
     if (!record) {
-      record = { q: new Set(), a: new Set() };
+      record = { q: new Set(), a: new Set(), o: new Set() };
       postings.set(token, record);
     }
     record[field].add(docIndex);
@@ -726,6 +985,7 @@ function buildIndex(entries) {
   docs.forEach((doc, i) => {
     for (const token of new Set(doc.qTokens)) add(token, 'q', i);
     for (const token of new Set(doc.aTokens)) add(token, 'a', i);
+    for (const token of new Set(doc.oTokens)) add(token, 'o', i);
   });
 
   const total = docs.length;
@@ -733,7 +993,7 @@ function buildIndex(entries) {
   const stems = new Map();
 
   for (const [token, record] of postings) {
-    const documentFrequency = new Set([...record.q, ...record.a]).size;
+    const documentFrequency = new Set([...record.q, ...record.a, ...record.o]).size;
     // Rare tokens score far above common ones. On an MCQ bank this is what
     // makes a distinctive term beat the boilerplate shared by every stem.
     idf.set(token, Math.log(1 + total / (1 + documentFrequency)));
@@ -933,12 +1193,14 @@ function search(index, query, options = {}) {
         if (scored > slot.score[qi]) slot.score[qi] = scored;
         slot.terms.add(vocabToken);
       }
-      for (const docIndex of record.a) {
-        const slot = reach(docIndex);
-        if (weight > slot.coverage[qi]) slot.coverage[qi] = weight;
-        const scored = weight * tierWeight * ANSWER_WEIGHT;
-        if (scored > slot.score[qi]) slot.score[qi] = scored;
-        slot.terms.add(vocabToken);
+      for (const [field, fieldWeight] of [['o', OPTION_WEIGHT], ['a', ANSWER_WEIGHT]]) {
+        for (const docIndex of record[field]) {
+          const slot = reach(docIndex);
+          if (weight > slot.coverage[qi]) slot.coverage[qi] = weight;
+          const scored = weight * tierWeight * fieldWeight;
+          if (scored > slot.score[qi]) slot.score[qi] = scored;
+          slot.terms.add(vocabToken);
+        }
       }
     }
   });
@@ -1006,6 +1268,164 @@ function search(index, query, options = {}) {
   return collect(false).slice(0, Math.min(3, limit));
 }
 
+// ---------------------------------------------------------- view.js
+// Result rendering shared by both front ends: HTML strings in, no DOM access.
+// Pure, so the standalone build can inline it and the server can serve it, and
+// the markup is tested once instead of drifting between two copies.
+//
+// Everything that came from the pasted bank passes through escapeHtml before
+// it reaches markup: the results are written with innerHTML.
+
+
+const escapeHtml = (text) =>
+  String(text).replace(/[&<>"']/g, (ch) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])
+  );
+
+/**
+ * Wrap matched words in <mark>. Highlights what actually matched, not only
+ * what was typed: a stem or typo match lands on a different word from the one
+ * in the query box.
+ */
+function highlight(text, query, terms) {
+  const parts = [...new Set([...tokenize(query), ...(terms ?? [])])].filter(Boolean);
+  if (parts.length === 0) return escapeHtml(text);
+  const pattern = parts
+    .map((token) => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .sort((a, b) => b.length - a.length)
+    .join('|');
+  return escapeHtml(text).replace(new RegExp('(' + pattern + ')', 'gi'), '<mark>$1</mark>');
+}
+
+/**
+ * How many leading words every displayed question shares. When a handful of
+ * entries open with the same boilerplate, the eye should land on what differs,
+ * not re-read the identical run each time.
+ */
+function commonPrefixWords(questions) {
+  if (questions.length < 2) return 0;
+  const split = questions.map((q) => q.trim().split(/\s+/));
+  const shortest = Math.min(...split.map((words) => words.length));
+  let shared = 0;
+  // Never elide a question down to nothing.
+  while (shared < shortest - 1) {
+    const word = split[0][shared].toLowerCase();
+    if (!split.every((words) => words[shared].toLowerCase() === word)) break;
+    shared += 1;
+  }
+  return shared;
+}
+
+/** One compact line of choices, the correct one marked. */
+function renderOptions(entry, query, terms) {
+  const options = entry.options ?? [];
+  if (options.length === 0) return '';
+  const correct = tokenize(entry.answer).join(' ');
+  return (
+    '<div class="opts">' +
+    options
+      .map((option, i) => {
+        const isCorrect = tokenize(option).join(' ') === correct;
+        return (
+          '<span class="opt' + (isCorrect ? ' is-correct' : '') + '">' +
+          '<b>' + String.fromCharCode(65 + i) + '</b> ' + highlight(option, query, terms) +
+          '</span>'
+        );
+      })
+      .join('') +
+    '</div>'
+  );
+}
+
+/**
+ * Markup for a non-empty result list.
+ * @param hits from search()
+ * @param query the raw query text
+ * @param cursor index of the selected hit
+ */
+function renderHits(hits, query, cursor) {
+  const note = hits[0]?.approximate
+    ? '<p class="approx-note">No exact match. Closest entries in the bank:</p>'
+    : '';
+
+  const questions = hits.map((hit) => hit.entry.question);
+  const shared = commonPrefixWords(questions);
+  const sharedText = shared >= 2 ? questions[0].trim().split(/\s+/).slice(0, shared).join(' ') : '';
+  const sharedNote = sharedText
+    ? '<p class="shared-stem">' + highlight(sharedText, query, hits[0].terms) + ' &hellip;</p>'
+    : '';
+
+  const cards = hits
+    .map((hit, i) => {
+      const subject = hit.entry.subject
+        ? '<span class="tag">' + escapeHtml(hit.entry.subject) + '</span>'
+        : '';
+      const shown = sharedText
+        ? '&hellip; ' + highlight(hit.entry.question.trim().split(/\s+/).slice(shared).join(' '), query, hit.terms)
+        : highlight(hit.entry.question, query, hit.terms);
+      return (
+        '<article class="hit' + (i === cursor ? ' is-top' : '') + '" data-pick="' + i + '">' +
+        '<div class="q"><span class="num">' + (i + 1) + '</span>' + shown + subject + '</div>' +
+        renderOptions(hit.entry, query, hit.terms) +
+        '<div class="a">' + escapeHtml(hit.entry.answer) + '</div>' +
+        '</article>'
+      );
+    })
+    .join('');
+
+  return note + sharedNote + cards;
+}
+
+// ---------------------------------------------------------- keys.js
+// Keyboard behaviour on the lookup screen, as a pure decision: given a key
+// event and where focus is, say what should happen. Both front ends apply the
+// result to their own DOM; the decision itself lives here once, and is tested.
+
+/**
+ * @param event a KeyboardEvent, or anything with key/code/altKey/ctrlKey/metaKey
+ * @param context {focusInBox, focusInTextField, hitCount}
+ * @returns {{type: 'clear'|'jump'|'move'|'arm'|'type'|'none', index?, step?, char?}}
+ */
+function lookupKeyAction(event, context) {
+  const { focusInBox, focusInTextField, hitCount } = context;
+
+  // Escape empties the box for the next question, wherever focus is.
+  if (event.key === 'Escape') return { type: 'clear' };
+
+  // Alt+1..9 jumps to a numbered result. Read from event.code, not event.key:
+  // on a Mac, Option+1 types "¡", so event.key never reads "1".
+  const digit = /^Digit([1-9])$/.exec(event.code ?? '');
+  if (digit && event.altKey) {
+    const index = Number(digit[1]) - 1;
+    return index < hitCount ? { type: 'jump', index } : { type: 'none' };
+  }
+
+  if (focusInBox) {
+    if (event.key === 'ArrowDown') return { type: 'move', step: 1 };
+    if (event.key === 'ArrowUp') return { type: 'move', step: -1 };
+    // Enter keeps the answer on screen but arms the box, so the next
+    // keystroke replaces the old question instead of appending to it.
+    if (event.key === 'Enter') return { type: 'arm' };
+    return { type: 'none' };
+  }
+
+  // Type anywhere: a printable key outside any text field starts a new
+  // question. Space is left alone so it can still activate a focused button.
+  if (
+    !focusInTextField &&
+    typeof event.key === 'string' &&
+    event.key.length === 1 &&
+    event.key !== ' ' &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey
+  ) {
+    return { type: 'type', char: event.key };
+  }
+
+  return { type: 'none' };
+}
+
 // Conyso Recall — standalone UI. No server, no network, no disk.
 // The bank lives in this tab only; sessionStorage keeps it across a reload and
 // drops it when the tab closes.
@@ -1065,43 +1485,8 @@ const subjectsInBank = () =>
   [...new Set(state.entries.map((entry) => entry.subject).filter(Boolean))].sort();
 
 // ---------------------------------------------------------------- helpers
-
-const escapeHtml = (text) =>
-  String(text).replace(/[&<>"']/g, (ch) =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])
-  );
-
-function highlight(question, query, terms) {
-  // Highlight what actually matched, not just what was typed: a stem or typo
-  // match lands on a different word from the one in the query box.
-  const parts = [...new Set([...tokenize(query), ...(terms ?? [])])].filter(Boolean);
-  if (parts.length === 0) return escapeHtml(question);
-  const pattern = parts
-    .map((token) => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    .sort((a, b) => b.length - a.length)
-    .join('|');
-  return escapeHtml(question).replace(new RegExp('(' + pattern + ')', 'gi'), '<mark>$1</mark>');
-}
-
-
-/**
- * How many leading words every displayed question shares. When a handful of
- * entries open with the same boilerplate, the eye should land on what differs,
- * not re-read the identical run each time.
- */
-function commonPrefixWords(questions) {
-  if (questions.length < 2) return 0;
-  const split = questions.map((q) => q.trim().split(/\s+/));
-  const shortest = Math.min(...split.map((words) => words.length));
-  let shared = 0;
-  // Never elide a question down to nothing.
-  while (shared < shortest - 1) {
-    const word = split[0][shared].toLowerCase();
-    if (!split.every((words) => words[shared].toLowerCase() === word)) break;
-    shared += 1;
-  }
-  return shared;
-}
+// escapeHtml, highlight, commonPrefixWords, renderOptions and renderHits come
+// from lib/view.js, which the build inlines ahead of this file.
 
 // ---------------------------------------------------------------- lookup
 
@@ -1124,33 +1509,7 @@ function renderResults() {
     return;
   }
 
-  const note = state.hits[0].approximate
-    ? '<p class="approx-note">No exact match. Closest entries in the bank:</p>'
-    : '';
-
-  const questions = state.hits.map((hit) => hit.entry.question);
-  const shared = commonPrefixWords(questions);
-  const sharedText = shared >= 2 ? questions[0].trim().split(/\s+/).slice(0, shared).join(' ') : '';
-  const sharedNote = sharedText
-    ? '<p class="shared-stem">' + highlight(sharedText, query, state.hits[0].terms) + ' &hellip;</p>'
-    : '';
-
-  box.innerHTML = note + sharedNote + state.hits
-    .map((hit, i) => {
-      const subject = hit.entry.subject
-        ? '<span class="tag">' + escapeHtml(hit.entry.subject) + '</span>'
-        : '';
-      const shown = sharedText
-        ? '&hellip; ' + highlight(hit.entry.question.trim().split(/\s+/).slice(shared).join(' '), query, hit.terms)
-        : highlight(hit.entry.question, query, hit.terms);
-      return (
-        '<article class="hit' + (i === state.cursor ? ' is-top' : '') + '" data-pick="' + i + '">' +
-        '<div class="q"><span class="num">' + (i + 1) + '</span>' + shown + subject + '</div>' +
-        '<div class="a">' + escapeHtml(hit.entry.answer) + '</div>' +
-        '</article>'
-      );
-    })
-    .join('');
+  box.innerHTML = renderHits(state.hits, query, state.cursor);
 }
 
 function runSearch() {
@@ -1210,11 +1569,14 @@ function renderPreview() {
         ? '<span class="conflict">already in the ' + record.conflict.where + ': ' +
           escapeHtml(record.conflict.existingAnswer) + '</span>'
         : '';
+      const warning = record.warning
+        ? '<span class="conflict">' + escapeHtml(record.warning) + '</span>'
+        : '';
       return (
         '<tr><td><input type="checkbox" data-row="' + i + '"' + (record.include ? ' checked' : '') + '></td>' +
         '<td class="status" data-label="Status"><span class="pill ' + record.status + '">' + record.status + '</span></td>' +
-        '<td data-label="Question">' + escapeHtml(record.question) + '</td>' +
-        '<td data-label="Correct answer">' + escapeHtml(record.answer) + conflict + '</td></tr>'
+        '<td data-label="Question">' + escapeHtml(record.question) + renderOptions(record, '', []) + '</td>' +
+        '<td data-label="Correct answer">' + escapeHtml(record.answer) + conflict + warning + '</td></tr>'
       );
     })
     .join('');
@@ -1232,6 +1594,7 @@ function renderPreview() {
     : '';
 
   const selected = records.filter((record) => record.include).length;
+  const warned = records.filter((record) => record.warning).length;
 
   box.innerHTML =
     '<h2>Preview &mdash; nothing added yet</h2>' +
@@ -1240,6 +1603,7 @@ function renderPreview() {
     '<span><span class="pill new">new</span> <b>' + counts.new + '</b></span>' +
     '<span><span class="pill duplicate">duplicate</span> <b>' + counts.duplicate + '</b></span>' +
     '<span><span class="pill contradiction">contradiction</span> <b>' + counts.contradiction + '</b></span>' +
+    (warned > 0 ? '<span><span class="pill contradiction">answer not an option</span> <b>' + warned + '</b></span>' : '') +
     '</div>' +
     '<div class="actions">' +
     '<button id="btn-commit" class="primary">Add ' + selected + ' selected</button>' +
@@ -1270,15 +1634,20 @@ function doPreview() {
   const existing = state.entries.map((entry) => ({
     question_norm: normalizeQuestion(entry.question),
     answer: entry.answer,
+    options: entry.options ?? [],
   }));
   const { records, counts } = analyzeImport(parsed.entries, existing);
 
-  // Duplicates and contradictions start unticked: adding one is deliberate.
+  // Duplicates, contradictions, and answers that are not among their own
+  // options all start unticked: adding one is deliberate.
   state.preview = {
     convention: parsed.convention,
     problems: parsed.problems,
     counts,
-    records: records.map((record) => ({ ...record, include: record.status === 'new' })),
+    records: records.map((record) => ({
+      ...record,
+      include: record.status === 'new' && !record.warning,
+    })),
   };
   renderPreview();
 }
@@ -1297,6 +1666,7 @@ function doCommit() {
       subject,
       question: record.question,
       answer: record.answer,
+      options: record.options ?? [],
       batchId,
     });
   }
@@ -1310,7 +1680,7 @@ function doCommit() {
 }
 
 function bankAsText() {
-  return state.entries.map((entry) => 'Q: ' + entry.question + '\nA: ' + entry.answer).join('\n');
+  return formatBank(state.entries);
 }
 
 async function copyBank() {
@@ -1349,34 +1719,78 @@ function flash(button, message) {
 
 $('q').addEventListener('input', runSearch);
 
-$('q').addEventListener('keydown', (event) => {
-  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-    event.preventDefault();
-    if (state.hits.length === 0) return;
-    const step = event.key === 'ArrowDown' ? 1 : -1;
-    state.cursor = (state.cursor + step + state.hits.length) % state.hits.length;
-    renderResults();
-  }
-  if (event.key === 'Escape') {
-    $('q').value = '';
-    runSearch();
-  }
-  // Jump straight to a numbered result instead of arrowing to it.
-  if (/^[1-9]$/.test(event.key) && event.altKey) {
-    const wanted = Number(event.key) - 1;
-    if (wanted < state.hits.length) {
+// Keyboard. Handled at page level, not on the search box, so the keys keep
+// working after a result has been clicked and focus has left the box.
+const onLookup = () => $('screen-lookup').classList.contains('is-active');
+const isTextField = (el) =>
+  el !== null &&
+  (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || (el.tagName === 'INPUT' && el.type !== 'checkbox'));
+const isTouch = () => window.matchMedia('(pointer: coarse)').matches;
+
+/** Empty the box for the next question and put the cursor back in it. */
+function clearQuery() {
+  $('q').value = '';
+  runSearch();
+  $('q').focus();
+}
+
+document.addEventListener('keydown', (event) => {
+  if (!onLookup()) return;
+  const q = $('q');
+  const active = document.activeElement;
+  const action = lookupKeyAction(event, {
+    focusInBox: active === q,
+    focusInTextField: isTextField(active),
+    hitCount: state.hits.length,
+  });
+
+  switch (action.type) {
+    case 'clear':
       event.preventDefault();
-      state.cursor = wanted;
+      clearQuery();
+      break;
+    case 'jump':
+      event.preventDefault();
+      state.cursor = action.index;
       renderResults();
-    }
+      break;
+    case 'move':
+      event.preventDefault();
+      if (state.hits.length > 0) {
+        state.cursor = (state.cursor + action.step + state.hits.length) % state.hits.length;
+        renderResults();
+      }
+      break;
+    case 'arm':
+      event.preventDefault();
+      q.select();
+      break;
+    case 'type':
+      event.preventDefault();
+      q.focus();
+      q.value = action.char;
+      runSearch();
+      break;
+    default:
+      break;
   }
 });
+
+// The clear button a search field draws on its own (the x on desktop, the
+// circled x on iOS) fires "search"; not every browser also fires "input".
+$('q').addEventListener('search', runSearch);
 
 $('results').addEventListener('click', (event) => {
   const card = event.target.closest('[data-pick]');
   if (!card) return;
   state.cursor = Number(card.dataset.pick);
   renderResults();
+  // Keep the keyboard flow going. Not on touch: focusing would raise the
+  // on-screen keyboard over the answer being read.
+  if (!isTouch()) {
+    $('q').focus();
+    $('q').select();
+  }
 });
 
 $('subject-chips').addEventListener('click', (event) => {
