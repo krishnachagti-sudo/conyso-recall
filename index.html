@@ -211,6 +211,43 @@ kbd {
   padding: 0 5px; margin: 0 1px; border: 1px solid var(--line); border-bottom-width: 2px;
   border-radius: 4px; background: var(--panel); color: var(--ink);
 }
+
+/* Bank browser */
+.browser { margin-top: 34px; border-top: 1px solid var(--line); padding-top: 20px; }
+.browser-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
+.browser-head h2 { margin: 0; }
+.browser-head .count { margin-left: 6px; }
+.browser-head input { flex: 1; min-width: 160px; max-width: 320px; }
+.bank-row {
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel);
+  padding: 10px 14px; margin-bottom: 8px;
+}
+.bank-row .q { font-size: 14px; }
+.bank-row .bank-answer { margin-top: 4px; font-weight: 600; color: var(--accent); }
+.bank-row mark { background: var(--accent-soft); color: var(--accent); font-weight: 600; border-radius: 3px; padding: 0 1px; }
+.row-actions { display: flex; gap: 6px; margin-top: 8px; }
+.row-actions button {
+  padding: 4px 10px; font: inherit; font-size: 13px; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink);
+}
+.row-actions button[data-delete]:hover { border-color: var(--bad); color: var(--bad); }
+.row-actions button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.bank-row.editing { border-color: var(--accent); }
+.bank-row.editing .field { margin-bottom: 8px; }
+.form-error { color: var(--bad); font-size: 13px; margin: 4px 0; }
+.more {
+  width: 100%; padding: 8px; font: inherit; cursor: pointer; margin-top: 4px;
+  border: 1px dashed var(--line); border-radius: var(--radius); background: none; color: var(--ink-soft);
+}
+
+/* File import */
+.file-btn {
+  display: inline-flex; align-items: center; padding: 8px 14px; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink);
+}
+.drop-hint { font-size: 12px; color: var(--ink-soft); margin: 8px 0 0; }
+.drop-hint code { font-size: 11px; }
+textarea.dropping { outline: 2px dashed var(--accent); outline-offset: 2px; }
 </style>
 </head>
 <body>
@@ -235,8 +272,8 @@ kbd {
   <section id="screen-bank" class="screen">
     <p class="session-note">
       <strong>Session only.</strong> The bank lives in this tab and is gone when you close it.
-      Nothing is saved to disk and nothing leaves the page. Use <em>Copy bank</em> before you go
-      if you want to paste it back later.
+      Nothing is saved and nothing leaves the page. To keep it, <em>Download bank</em> before you
+      go and import that file next time &mdash; options and subjects come back with it.
     </p>
 
     <div class="grid">
@@ -250,9 +287,11 @@ kbd {
           <span>Format</span>
           <select id="convention">
             <option value="">Detect automatically</option>
-            <option value="qa">Q: / A: blocks</option>
-            <option value="pipe">question | answer</option>
-            <option value="tab">question &rarr;tab&rarr; answer</option>
+            <option value="qa">Q: / A: blocks, with or without options</option>
+            <option value="mcq">Numbered questions with a) b) c) options</option>
+            <option value="pipe">question | options | answer</option>
+            <option value="tab">Spreadsheet paste (tab-separated)</option>
+            <option value="csv">CSV (comma-separated)</option>
             <option value="alternating">Alternating lines</option>
           </select>
         </label>
@@ -261,13 +300,18 @@ kbd {
         <div class="actions">
           <button id="btn-preview" class="primary">Preview</button>
           <button id="btn-clear">Clear</button>
+          <label class="file-btn">Import a file&hellip;
+            <input id="file" type="file" accept=".txt,.csv,.tsv,.md,text/plain,text/csv,text/tab-separated-values" hidden>
+          </label>
         </div>
+        <p class="drop-hint">Or drop a .txt, .csv or .tsv file on the box. A <code>Subject: ops</code> line tags everything after it.</p>
       </div>
 
       <div>
         <h2>This session</h2>
         <div id="batches" class="batches"></div>
         <div class="actions">
+          <button id="btn-download">Download bank</button>
           <button id="btn-copy">Copy bank</button>
           <button id="btn-wipe">Empty the bank</button>
         </div>
@@ -275,6 +319,14 @@ kbd {
     </div>
 
     <div id="preview" class="preview" hidden></div>
+
+    <div class="browser">
+      <div class="browser-head">
+        <h2>Everything in the bank <span id="bank-list-count" class="count"></span></h2>
+        <input id="bank-filter" type="search" placeholder="Filter&hellip;" autocomplete="off" spellcheck="false">
+      </div>
+      <div id="bank-list"></div>
+    </div>
   </section>
 </main>
 
@@ -517,6 +569,30 @@ function detectConvention(lines) {
   return best;
 }
 
+/**
+ * One spreadsheet-style row -> a record, or a problem. Two fields is a plain
+ * question and answer; more is question, options..., answer.
+ */
+function rowToRecord(fields, lineNumber, rawLine) {
+  const question = stripQuestionNoise(fields[0]);
+  if (question.length === 0) {
+    return { problem: { line: lineNumber, text: rawLine, reason: 'question side is empty' } };
+  }
+
+  const last = fields[fields.length - 1];
+  if (last.length === 0) {
+    return { problem: { line: lineNumber, text: rawLine, reason: 'answer side is empty' } };
+  }
+
+  if (fields.length === 2) {
+    return { entry: { question, answer: stripAnswerNoise(last), options: [], line: lineNumber } };
+  }
+
+  const options = fields.slice(1, -1).map(stripOptionLabel).filter((option) => option.length > 0);
+  const resolved = resolveAnswer(stripAnswerLine(last), options);
+  return { entry: { question, ...resolved, options, line: lineNumber } };
+}
+
 function parseDelimited(lines, delimiter) {
   const entries = [];
   const problems = [];
@@ -536,30 +612,94 @@ function parseDelimited(lines, delimiter) {
     const fields = line.split(delimiter).map((field) => field.trim());
     if (first && isHeaderRow(fields)) return;
 
-    const question = stripQuestionNoise(fields[0]);
-    if (question.length === 0) {
-      problems.push({ line: index + 1, text: line, reason: 'question side is empty' });
-      return;
-    }
-
-    const last = fields[fields.length - 1];
-    if (last.length === 0) {
-      problems.push({ line: index + 1, text: line, reason: 'answer side is empty' });
-      return;
-    }
-
-    // Two fields is a plain pair. More is "question | options... | answer".
-    if (fields.length === 2) {
-      entries.push({ question, answer: stripAnswerNoise(last), options: [], line: index + 1 });
-      return;
-    }
-
-    const options = fields.slice(1, -1).map(stripOptionLabel).filter((option) => option.length > 0);
-    const resolved = resolveAnswer(stripAnswerLine(last), options);
-    entries.push({ question, ...resolved, options, line: index + 1 });
+    const { entry, problem } = rowToRecord(fields, index + 1, line);
+    if (entry) entries.push(entry);
+    else problems.push(problem);
   });
 
   return { entries, problems };
+}
+
+/**
+ * RFC 4180 records: comma-separated fields, double quotes around any field
+ * that contains a comma, quote or line break, and "" for a literal quote.
+ * Returns [{fields, line}] where line is where the record starts.
+ */
+function readCsvRecords(text) {
+  const records = [];
+  let fields = [];
+  let field = '';
+  let quoted = false;
+  let line = 1;
+  let startLine = 1;
+
+  const endField = () => {
+    fields.push(field.replace(/\s+/g, ' ').trim());
+    field = '';
+  };
+  const endRecord = () => {
+    endField();
+    if (fields.some((value) => value.length > 0)) records.push({ fields, line: startLine });
+    fields = [];
+    startLine = line;
+  };
+
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') {
+        field += '"';
+        i += 1;
+      } else if (ch === '"') {
+        quoted = false;
+      } else {
+        if (ch === '\n') line += 1;
+        field += ch;
+      }
+    } else if (ch === '"' && field.trim().length === 0) {
+      quoted = true;
+      field = '';
+    } else if (ch === ',') {
+      endField();
+    } else if (ch === '\n') {
+      line += 1;
+      endRecord();
+    } else {
+      field += ch;
+    }
+  }
+  if (field.length > 0 || fields.length > 0) endRecord();
+  return records;
+}
+
+function parseCsv(text) {
+  const entries = [];
+  const problems = [];
+
+  readCsvRecords(text).forEach(({ fields, line }, i) => {
+    const raw = fields.join(', ');
+    if (i === 0 && isHeaderRow(fields)) return;
+    if (fields.length < 2) {
+      problems.push({ line, text: raw, reason: 'fewer than two columns' });
+      return;
+    }
+    const { entry, problem } = rowToRecord(fields, line, raw);
+    if (entry) entries.push(entry);
+    else problems.push(problem);
+  });
+
+  return { entries, problems };
+}
+
+/**
+ * A list of options typed one per line, labels optional:
+ * "A) Motion\n(b) Kaizen\nGemba" -> ["Motion", "Kaizen", "Gemba"].
+ */
+function cleanOptions(text) {
+  return String(text ?? '')
+    .split('\n')
+    .map((line) => stripOptionLabel(line.trim()))
+    .filter((line) => line.length > 0);
 }
 
 /**
@@ -693,9 +833,21 @@ function parseAlternating(lines) {
  * Parse pasted text into records.
  * @returns {{convention: string, entries: Array, problems: Array}}
  */
+const SUBJECT_LINE = /^\s*subject\s*:\s*(.*?)\s*$/i;
+
 function parseBank(raw, options = {}) {
-  const text = String(raw ?? '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
-  const lines = text.split('\n');
+  const original = String(raw ?? '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+
+  // "Subject: ops" lines tag the records after them. They are blanked rather
+  // than removed, so every line number reported below still matches the paste.
+  const subjectChanges = [];
+  const lines = original.split('\n').map((line, index) => {
+    const match = SUBJECT_LINE.exec(line);
+    if (!match) return line;
+    subjectChanges.push({ line: index + 1, subject: match[1] || null });
+    return '';
+  });
+  const text = lines.join('\n');
 
   if (text.trim().length === 0) {
     return { convention: 'alternating', entries: [], problems: [] };
@@ -715,27 +867,55 @@ function parseBank(raw, options = {}) {
     case 'pipe':
       result = parseDelimited(lines, '|');
       break;
+    // Never guessed: commas are ordinary in questions. Chosen explicitly, or
+    // implied by a .csv file.
+    case 'csv':
+      result = parseCsv(text);
+      break;
     default:
       result = parseAlternating(lines);
       break;
+  }
+
+  if (subjectChanges.length > 0) {
+    for (const entry of result.entries) {
+      let subject;
+      for (const change of subjectChanges) if (change.line < entry.line) subject = change.subject ?? undefined;
+      if (subject !== undefined) entry.subject = subject;
+    }
   }
 
   return { convention, ...result };
 }
 
 /**
- * The inverse of parseBank: a bank as pasteable text. Used by "Copy bank", so
- * a session can be carried into a fresh one with its options intact.
+ * The inverse of parseBank: a bank as pasteable text. Used by "Copy bank" and
+ * the download, so a bank carries into a fresh session with its options and
+ * subjects intact. Untagged entries come first: a Subject: line applies to
+ * everything after it, so they must not follow one.
  */
 function formatBank(entries) {
-  return entries
-    .map((entry) => {
-      const options = entry.options ?? [];
-      if (options.length === 0) return 'Q: ' + entry.question + '\nA: ' + entry.answer;
-      const lines = options.map((option, i) => String.fromCharCode(65 + i) + ') ' + option);
-      return 'Q: ' + entry.question + '\n' + lines.join('\n') + '\nAnswer: ' + entry.answer;
-    })
-    .join('\n\n');
+  const groups = new Map([['', []]]);
+  for (const entry of entries) {
+    const key = entry.subject ?? '';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(entry);
+  }
+
+  const formatEntry = (entry) => {
+    const options = entry.options ?? [];
+    if (options.length === 0) return 'Q: ' + entry.question + '\nA: ' + entry.answer;
+    const lines = options.map((option, i) => String.fromCharCode(65 + i) + ') ' + option);
+    return 'Q: ' + entry.question + '\n' + lines.join('\n') + '\nAnswer: ' + entry.answer;
+  };
+
+  const blocks = [];
+  for (const [subject, list] of groups) {
+    if (list.length === 0) continue;
+    if (subject) blocks.push('Subject: ' + subject);
+    blocks.push(...list.map(formatEntry));
+  }
+  return blocks.join('\n\n');
 }
 
 // ---------------------------------------------------------- analyze.js
@@ -824,12 +1004,13 @@ function analyzeImport(entries, existing = []) {
 // Pure: no I/O, no dependencies. Loaded verbatim by both the browser and the
 // test suite, so the tests constrain the behaviour the UI actually runs.
 //
-// Matching is tiered per token rather than globally relaxed. Each query token is
-// resolved against the vocabulary at the cheapest tier that finds anything —
-// exact, then shared stem, then prefix, then typo. A token you typed correctly
-// is therefore never reinterpreted as a typo of something else, so typing well
-// keeps the precision of exact matching and only a token that genuinely misses
-// pays for the looser tiers.
+// Each query word is resolved against the bank's vocabulary into a set of
+// candidate terms, each with a tier that sets how much a match on it counts:
+// exact, then shared stem, then prefix (the word may still be being typed),
+// then acronym, then typo. Candidates from several tiers can coexist — "open"
+// is an exact word and also the start of "openness" — but the typo tier is
+// only ever consulted for a word that is not itself in the bank, so a word
+// typed correctly is never reinterpreted as a typo of something else.
 
 
 // Function words carry no discriminating information in a question bank, so
@@ -845,7 +1026,7 @@ const STOPWORDS = new Set([
   'some', 'such', 'so', 'you', 'your', 'i', 'we', 'they', 'he', 'she',
 ]);
 
-const TIER_WEIGHT = { exact: 1, stem: 0.92, prefix: 0.85, fuzzy: 0.6 };
+const TIER_WEIGHT = { exact: 1, stem: 0.92, prefix: 0.85, acronym: 0.75, fuzzy: 0.6 };
 
 // A term found only in the answer is real evidence but weaker than the same
 // term in the question, so a question match always outranks an answer match.
@@ -941,7 +1122,6 @@ function editDistance(a, b, max) {
   return previous[b.length];
 }
 
-const maxEdits = (length) => (length <= 4 ? 0 : length <= 7 ? 1 : 2);
 
 /**
  * Precompute postings, frequencies and stem keys. Call once per bank load and
@@ -1018,8 +1198,29 @@ function buildIndex(entries) {
     byLength.get(token.length).push(token);
   }
 
+  // Initials of every run of three to five meaningful words, from the stem and
+  // from each option separately: "Five Factor Model" is reachable as "ffm".
+  // Two-letter initials are left out; far too many word pairs share them.
+  const acronyms = new Map();
+  const addAcronyms = (tokens, docIndex) => {
+    const words = tokens.filter((token) => !STOPWORDS.has(token));
+    for (let size = 3; size <= 5; size += 1) {
+      for (let start = 0; start + size <= words.length; start += 1) {
+        const run = words.slice(start, start + size);
+        const initials = run.map((word) => word[0]).join('');
+        if (!acronyms.has(initials)) acronyms.set(initials, new Map());
+        const byDoc = acronyms.get(initials);
+        if (!byDoc.has(docIndex)) byDoc.set(docIndex, run);
+      }
+    }
+  };
+  docs.forEach((doc, i) => {
+    addAcronyms(doc.qTokens, i);
+    for (const option of doc.entry.options ?? []) addAcronyms(tokenize(option), i);
+  });
+
   return {
-    docs, postings, idf, stems, vocabulary, sorted, byLength,
+    docs, postings, idf, stems, vocabulary, sorted, byLength, acronyms,
     avgLength: avgLength || 1, total,
   };
 }
@@ -1048,57 +1249,167 @@ function withPrefix(index, prefix, cap) {
   return out;
 }
 
-/** Resolve one query token at the cheapest tier that matches anything. */
-function resolveToken(index, token) {
-  if (index.postings.has(token)) {
-    return { token, tier: 'exact', matches: [token] };
-  }
+/** "tkat" / "takt": the same letters with one neighbouring pair swapped. */
+function isAdjacentSwap(a, b) {
+  if (a.length !== b.length || a === b) return false;
+  let i = 0;
+  while (i < a.length && a[i] === b[i]) i += 1;
+  return i + 1 < a.length && a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2);
+}
 
-  const stemMatches = index.stems.get(stemToken(token));
-  if (stemMatches && stemMatches.length > 0) {
-    return { token, tier: 'stem', matches: stemMatches };
-  }
+/** "levl" / "level": the longer word with exactly one letter left out. */
+function isOneDrop(short, long) {
+  if (long.length !== short.length + 1) return false;
+  let i = 0;
+  while (i < short.length && short[i] === long[i]) i += 1;
+  return short.slice(i) === long.slice(i + 1);
+}
 
-  // Forward: the token is a prefix of bank words (ordinary typeahead).
-  const prefixMatches = withPrefix(index, token, PREFIX_MATCH_CAP);
-  // Reverse: the token is longer than the bank word it should match. Checking
-  // the token's own prefixes costs O(length), not a vocabulary scan. The stem
-  // must be a substantial share of what was typed — otherwise a short unrelated
-  // word stands in for a long mistyped one and the typo tier never gets to fix it.
-  const shortestUseful = Math.max(4, Math.ceil(token.length * 0.6));
-  for (let cut = token.length - 1; cut >= shortestUseful; cut -= 1) {
-    const shorter = token.slice(0, cut);
-    if (index.postings.has(shorter)) {
-      prefixMatches.push(shorter);
-      break;
+/**
+ * Typo candidates for a token that is not itself a bank word. Longer tokens
+ * get an edit budget. Short ones get only the two slips that leave a word
+ * recognisable, a swapped pair or a dropped letter: one substitution away
+ * from a three-letter word is too many unrelated words to guess between.
+ */
+function typoMatches(index, token) {
+  const length = token.length;
+  if (length < 3) return [];
+
+  if (length <= 4) {
+    const out = [];
+    for (const candidate of index.byLength.get(length) ?? []) {
+      if (isAdjacentSwap(token, candidate)) out.push(candidate);
     }
-  }
-  if (prefixMatches.length > 0) {
-    return { token, tier: 'prefix', matches: prefixMatches };
+    for (const candidate of index.byLength.get(length + 1) ?? []) {
+      if (candidate[0] === token[0] && isOneDrop(token, candidate)) out.push(candidate);
+    }
+    return out;
   }
 
-  const budget = maxEdits(token.length);
-  if (budget > 0) {
-    let best = budget + 1;
-    let fuzzy = [];
-    for (let length = token.length - budget; length <= token.length + budget; length += 1) {
-      const bucket = index.byLength.get(length);
-      if (!bucket) continue;
-      for (const candidate of bucket) {
-        const distance = editDistance(token, candidate, budget);
-        if (distance > budget) continue;
-        if (distance < best) {
-          best = distance;
-          fuzzy = [candidate];
-        } else if (distance === best) {
-          fuzzy.push(candidate);
-        }
+  const budget = length <= 7 ? 1 : 2;
+  let best = budget + 1;
+  let out = [];
+  for (let size = length - budget; size <= length + budget; size += 1) {
+    for (const candidate of index.byLength.get(size) ?? []) {
+      const distance = editDistance(token, candidate, budget);
+      if (distance > budget) continue;
+      if (distance < best) {
+        best = distance;
+        out = [candidate];
+      } else if (distance === best) {
+        out.push(candidate);
       }
     }
-    if (fuzzy.length > 0) return { token, tier: 'fuzzy', matches: fuzzy };
+  }
+  return out;
+}
+
+/**
+ * Resolve one query word into candidate bank terms, each with a tier and a
+ * weight. Returns null when nothing in the bank answers to it at all.
+ *
+ * A word that is in the bank exactly as typed resolves to itself alone, unless
+ * `widen` is set. Letting "relationships" also reach "relationship" and every
+ * longer word beginning "relationships" on the first pass hands rival stems
+ * points they did not earn; that happened, and it measurably pushed the right
+ * question down. The widened pass exists for the other reading of an exact
+ * word: that it is a partial still being typed ("open" for "openness").
+ */
+function resolveToken(index, token, widen) {
+  const idfOf = (term) => index.idf.get(term) ?? 0;
+  const found = new Map();
+  const add = (term, tier, weight) => {
+    const current = found.get(term);
+    if (!current || weight * TIER_WEIGHT[tier] > current.weight * TIER_WEIGHT[current.tier]) {
+      found.set(term, { term, tier, weight });
+    }
+  };
+
+  const exact = index.postings.has(token);
+  if (exact) add(token, 'exact', idfOf(token));
+
+  // Initials stand in for a phrase only when what was typed is not already a
+  // bank word — or, for a real word, only on the widened reading, which ranks
+  // below the exact one. Never for a function word: "the" is not the initials
+  // of "tasks horizontally enrichment", though the index would say it could be.
+  const acronymDocs =
+    token.length >= 3 && !STOPWORDS.has(token) && (!exact || widen) ? index.acronyms.get(token) : undefined;
+  if (exact && !widen) return { token, isWord: true, matches: [...found.values()], acronymDocs };
+
+  const stemMatches = index.stems.get(stemToken(token)) ?? [];
+  for (const term of stemMatches) add(term, 'stem', idfOf(term));
+
+  const isWord = exact || stemMatches.length > 0;
+
+  // Typeahead: bank words that begin with what was typed. On the widened pass
+  // this also applies to a word that is complete in its own right — "open" on
+  // the way to "openness" — with those continuations capped at the typed
+  // word's own weight so they cannot outrank it. A finished function word is
+  // never expanded: "is" is not the start of "issue".
+  let forward = [];
+  if (!(exact && STOPWORDS.has(token))) {
+    const cap = exact ? idfOf(token) : Infinity;
+    forward = withPrefix(index, token, PREFIX_MATCH_CAP);
+    for (const term of forward) add(term, 'prefix', Math.min(idfOf(term), cap));
   }
 
-  return null;
+  if (!isWord) {
+    // Reverse typeahead: a longer form of a bank word. Weighted by how much of
+    // the typed word the bank word accounts for, so "improvements" leans hard
+    // on "improvement" while "managemnet" barely leans on "manage".
+    const shortestUseful = Math.max(4, Math.ceil(token.length * 0.6));
+    for (let cut = token.length - 1; cut >= shortestUseful; cut -= 1) {
+      const shorter = token.slice(0, cut);
+      if (index.postings.has(shorter)) {
+        add(shorter, 'prefix', idfOf(shorter) * (cut / token.length) ** 2);
+        break;
+      }
+    }
+
+    // Typos, alongside the reverse match rather than instead of it:
+    // "managemnet" starts with the real word "manage" but means "management".
+    // Not while the token is still the start of a bank word — "kaiz" is being
+    // typed, not mistyped.
+    if (forward.length === 0) {
+      for (const term of typoMatches(index, token)) add(term, 'fuzzy', idfOf(term));
+    }
+  }
+
+  if (found.size === 0 && !acronymDocs) return null;
+  return { token, isWord, matches: [...found.values()], acronymDocs };
+}
+
+/**
+ * Should this token be tried as two words typed without a space? Only when it
+ * is not a bank word and no bank word even starts with it, so a word still
+ * being typed is never cut in two.
+ */
+function looksRunTogether(index, token) {
+  return (
+    token.length >= 7 &&
+    !index.postings.has(token) &&
+    !(index.stems.get(stemToken(token))?.length) &&
+    withPrefix(index, token, 1).length === 0
+  );
+}
+
+/**
+ * "microsoftfoundations" -> ["microsoft", "foundations"]. The first part must
+ * be a whole bank word; the second may be whole or still being typed.
+ * Prefers a split into two whole words, then the longer first word.
+ */
+function splitRunTogether(index, token) {
+  let best = null;
+  for (let cut = 3; cut <= token.length - 3; cut += 1) {
+    const left = token.slice(0, cut);
+    const right = token.slice(cut);
+    if (!index.postings.has(left)) continue;
+    const whole = index.postings.has(right);
+    if (!whole && withPrefix(index, right, 1).length === 0) continue;
+    const score = (whole ? 1000 : 0) + left.length;
+    if (best === null || score > best.score) best = { parts: [left, right], score };
+  }
+  return best ? best.parts : null;
 }
 
 function contiguousRunStart(tokens, queryTokens) {
@@ -1125,22 +1436,39 @@ function contiguousRunStart(tokens, queryTokens) {
 function search(index, query, options = {}) {
   const { subject = null, limit = 8, allowApproximate = true } = options;
 
-  const queryNorm = normalizeQuestion(query);
-  if (queryNorm.length === 0) return [];
-  const queryTokens = queryNorm.split(' ');
+  const typed = normalizeQuestion(query);
+  if (typed.length === 0) return [];
 
+  // Words typed without a space between them are split before anything else,
+  // and the rest of the search works on the separated words.
+  const queryTokens = [];
+  for (const token of typed.split(' ')) {
+    const parts = looksRunTogether(index, token) ? splitRunTogether(index, token) : null;
+    if (parts) queryTokens.push(...parts);
+    else queryTokens.push(token);
+  }
+  const queryNorm = queryTokens.join(' ');
+
+  const acronymWeight = (docs) => Math.log(1 + index.total / (1 + docs.size)) * TIER_WEIGHT.acronym;
+
+  /** One scoring pass over the bank. */
+  const pass = (widen) => {
   const resolved = [];
   let noise = 0;
   for (const token of queryTokens) {
-    const match = resolveToken(index, token);
+    const match = resolveToken(index, token, widen);
     if (match === null) {
       noise += 1;
       continue;
     }
-    match.idf = Math.max(...match.matches.map((m) => index.idf.get(m) ?? 0));
+    match.idf = Math.max(
+      0,
+      ...match.matches.map((m) => m.weight),
+      match.acronymDocs ? acronymWeight(match.acronymDocs) : 0
+    );
     resolved.push(match);
   }
-  if (resolved.length === 0) return [];
+  if (resolved.length === 0) return { strict: [], loose: () => [] };
 
   const maxIdf = Math.max(...resolved.map((item) => item.idf));
   const required = resolved.map(
@@ -1168,10 +1496,9 @@ function search(index, query, options = {}) {
   };
 
   resolved.forEach((item, qi) => {
-    const tierWeight = TIER_WEIGHT[item.tier];
-    for (const vocabToken of item.matches) {
-      const weight = index.idf.get(vocabToken) ?? 0;
-      const record = index.postings.get(vocabToken);
+    for (const { term, tier, weight } of item.matches) {
+      const tierWeight = TIER_WEIGHT[tier];
+      const record = index.postings.get(term);
       if (!record) continue;
 
       for (const docIndex of record.q) {
@@ -1180,18 +1507,18 @@ function search(index, query, options = {}) {
 
         const doc = docs[docIndex];
         let position = 1;
-        if (doc.firstAnchors.has(vocabToken)) {
+        if (doc.firstAnchors.has(term)) {
           position = FIRST_ANCHOR_BOOST;
           slot.atFirst.add(qi);
         }
-        if (doc.lastAnchors.has(vocabToken)) {
+        if (doc.lastAnchors.has(term)) {
           position = Math.max(position, LAST_ANCHOR_BOOST);
           slot.atLast.add(qi);
         }
 
         const scored = weight * tierWeight * position;
         if (scored > slot.score[qi]) slot.score[qi] = scored;
-        slot.terms.add(vocabToken);
+        slot.terms.add(term);
       }
       for (const [field, fieldWeight] of [['o', OPTION_WEIGHT], ['a', ANSWER_WEIGHT]]) {
         for (const docIndex of record[field]) {
@@ -1199,8 +1526,20 @@ function search(index, query, options = {}) {
           if (weight > slot.coverage[qi]) slot.coverage[qi] = weight;
           const scored = weight * tierWeight * fieldWeight;
           if (scored > slot.score[qi]) slot.score[qi] = scored;
-          slot.terms.add(vocabToken);
+          slot.terms.add(term);
         }
+      }
+    }
+
+    // Initials: the whole phrase they stand for counts as one match, and its
+    // words are reported so the phrase lights up in the result.
+    if (item.acronymDocs) {
+      const weight = acronymWeight(item.acronymDocs);
+      for (const [docIndex, run] of item.acronymDocs) {
+        const slot = reach(docIndex);
+        if (weight > slot.coverage[qi]) slot.coverage[qi] = weight;
+        if (weight > slot.score[qi]) slot.score[qi] = weight;
+        for (const word of run) slot.terms.add(word);
       }
     }
   });
@@ -1259,13 +1598,31 @@ function search(index, query, options = {}) {
     return found;
   };
 
-  const strict = collect(true);
-  if (strict.length > 0) return strict.slice(0, limit);
+  return { strict: collect(true), loose: () => collect(false) };
+  };
+
+  // Words taken exactly as typed rank first, always. When that leaves room,
+  // the same query is read again allowing each exact word to be unfinished
+  // ("open" on the way to "openness"), and whatever that finds is appended
+  // below — never interleaved, so a looser reading can never outrank what you
+  // actually typed. Running it only as a fallback when the exact reading found
+  // nothing missed the right answer whenever an unrelated stem happened to
+  // satisfy the exact reading.
+  const exactReading = pass(false);
+  let hits = exactReading.strict;
+  let widened = null;
+  if (hits.length < limit && queryTokens.some((token) => index.postings.has(token))) {
+    widened = pass(true);
+    const shown = new Set(hits.map((hit) => hit.entry));
+    hits = hits.concat(widened.strict.filter((hit) => !shown.has(hit.entry)));
+  }
+
+  if (hits.length > 0) return hits.slice(0, limit);
   if (!allowApproximate) return [];
 
-  // Nothing satisfied every content word. Rather than a dead end, offer the
-  // closest entries, clearly marked so the top hit is never mistaken for one.
-  return collect(false).slice(0, Math.min(3, limit));
+  // Still nothing. Rather than a dead end, offer the closest entries, clearly
+  // marked so the top hit is never mistaken for an exact one.
+  return (widened ?? exactReading).loose().slice(0, Math.min(3, limit));
 }
 
 // ---------------------------------------------------------- view.js
@@ -1376,6 +1733,49 @@ function renderHits(hits, query, cursor) {
   return note + sharedNote + cards;
 }
 
+/** One row of the bank browser: the full entry, with edit and delete. */
+function renderBankRow(entry, query = '', terms = []) {
+  const subject = entry.subject ? '<span class="tag">' + escapeHtml(entry.subject) + '</span>' : '';
+  return (
+    '<article class="bank-row" data-row-id="' + escapeHtml(entry.id) + '">' +
+    '<div class="q">' + highlight(entry.question, query, terms) + subject + '</div>' +
+    renderOptions(entry, query, terms) +
+    '<div class="bank-answer">' + escapeHtml(entry.answer) + '</div>' +
+    '<div class="row-actions">' +
+    '<button type="button" data-edit="' + escapeHtml(entry.id) + '">Edit</button>' +
+    '<button type="button" data-delete="' + escapeHtml(entry.id) + '">Delete</button>' +
+    '</div>' +
+    '</article>'
+  );
+}
+
+/**
+ * Inline editor for one entry. Options are one per line and may keep their
+ * letters; the answer may be the letter or the text — both are resolved on
+ * save exactly as they would be on import.
+ */
+function renderEditForm(entry) {
+  const options = (entry.options ?? []).map((option, i) => String.fromCharCode(65 + i) + ') ' + option).join('\n');
+  const id = escapeHtml(entry.id);
+  return (
+    '<form class="bank-row editing" data-form="' + id + '">' +
+    '<label class="field"><span>Question</span>' +
+    '<textarea name="question" rows="2">' + escapeHtml(entry.question) + '</textarea></label>' +
+    '<label class="field"><span>Options <em>(one per line; leave empty for a plain question)</em></span>' +
+    '<textarea name="options" rows="4">' + escapeHtml(options) + '</textarea></label>' +
+    '<label class="field"><span>Correct answer <em>(the text, or the letter of an option)</em></span>' +
+    '<input type="text" name="answer" value="' + escapeHtml(entry.answer) + '" autocomplete="off"></label>' +
+    '<label class="field"><span>Subject</span>' +
+    '<input type="text" name="subject" value="' + escapeHtml(entry.subject ?? '') + '" autocomplete="off"></label>' +
+    '<p class="form-error" hidden></p>' +
+    '<div class="row-actions">' +
+    '<button type="submit" class="primary">Save</button>' +
+    '<button type="button" data-cancel="' + id + '">Cancel</button>' +
+    '</div>' +
+    '</form>'
+  );
+}
+
 // ---------------------------------------------------------- keys.js
 // Keyboard behaviour on the lookup screen, as a pure decision: given a key
 // event and where focus is, say what should happen. Both front ends apply the
@@ -1443,7 +1843,11 @@ const state = {
   hits: [],
   cursor: 0,
   preview: null,
+  bankShown: 100,
+  editing: null,
 };
+
+const BANK_PAGE = 100;
 
 // ---------------------------------------------------------------- session
 
@@ -1620,7 +2024,121 @@ function renderAll() {
   renderChips();
   renderBatches();
   renderPreview();
+  renderBankList();
   runSearch();
+}
+
+// ---------------------------------------------------------------- browser
+
+/** Everything in the bank, filtered with the same matching as lookup. */
+function renderBankList() {
+  const box = $('bank-list');
+  const filter = $('bank-filter').value;
+
+  const rows = filter.trim()
+    ? search(state.index, filter, { limit: state.entries.length || 1, allowApproximate: false }).map((hit) => ({
+        entry: hit.entry,
+        terms: hit.terms,
+      }))
+    : state.entries.map((entry) => ({ entry, terms: [] }));
+
+  $('bank-list-count').textContent = filter.trim()
+    ? rows.length + ' of ' + state.entries.length
+    : state.entries.length > 0 ? String(state.entries.length) : '';
+
+  if (rows.length === 0) {
+    box.innerHTML = '<p class="empty">' + (state.entries.length === 0 ? 'Nothing here yet.' : 'Nothing matches that filter.') + '</p>';
+    return;
+  }
+
+  const shown = rows.slice(0, state.bankShown);
+  const more = rows.length - shown.length;
+  box.innerHTML =
+    shown
+      .map(({ entry, terms }) => (entry.id === state.editing ? renderEditForm(entry) : renderBankRow(entry, filter, terms)))
+      .join('') +
+    (more > 0 ? '<button type="button" id="bank-more" class="more">Show ' + Math.min(more, BANK_PAGE) + ' more of ' + more + '</button>' : '');
+}
+
+function startEdit(id) {
+  state.editing = id;
+  renderBankList();
+  const form = document.querySelector('[data-form="' + id + '"]');
+  if (form) form.querySelector('textarea[name="question"]').focus();
+}
+
+/** Save an inline edit. The answer is resolved exactly as on import. */
+function saveEdit(form) {
+  const id = Number(form.dataset.form);
+  const entry = state.entries.find((candidate) => candidate.id === id);
+  if (!entry) return;
+
+  const fail = (message) => {
+    const error = form.querySelector('.form-error');
+    error.textContent = message;
+    error.hidden = false;
+  };
+
+  const question = form.question.value.trim();
+  const options = cleanOptions(form.options.value);
+  const typedAnswer = form.answer.value.trim();
+  if (question.length === 0) return fail('The question cannot be empty.');
+  if (typedAnswer.length === 0) return fail('The answer cannot be empty.');
+
+  const resolved = resolveAnswer(typedAnswer, options);
+  // On import a suspect answer is flagged; here you are fixing the key, so it
+  // has to be right before it is saved.
+  if (resolved.warning) return fail('Not saved: ' + resolved.warning + '. Type the letter or the exact option text.');
+
+  entry.question = question;
+  entry.options = options;
+  entry.answer = resolved.answer;
+  entry.subject = form.subject.value.trim() || null;
+
+  state.editing = null;
+  reindex();
+  saveSession();
+  renderAll();
+}
+
+function deleteEntry(id) {
+  const entry = state.entries.find((candidate) => candidate.id === id);
+  if (!entry) return;
+  if (!confirm('Delete this question from the bank?\n\n' + entry.question)) return;
+  state.entries = state.entries.filter((candidate) => candidate.id !== id);
+  if (state.editing === id) state.editing = null;
+  reindex();
+  saveSession();
+  renderAll();
+}
+
+// ---------------------------------------------------------------- files
+
+const MAX_FILE_BYTES = 5 * 1024 * 1024;
+
+async function importFile(file) {
+  if (file.size > MAX_FILE_BYTES) {
+    alert('That file is over 5 MB. Split it and import the parts.');
+    return;
+  }
+  $('paste').value = await file.text();
+  // The extension settles what the contents alone cannot: commas are normal
+  // in questions, so CSV is only ever read as CSV when the file says so.
+  if (/\.csv$/i.test(file.name)) $('convention').value = 'csv';
+  else if (/\.tsv$/i.test(file.name)) $('convention').value = 'tab';
+  doPreview();
+}
+
+function downloadBank() {
+  if (state.entries.length === 0) return;
+  const blob = new Blob([formatBank(state.entries) + '\n'], { type: 'text/plain;charset=utf-8' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = 'recall-bank-' + new Date().toISOString().slice(0, 10) + '.txt';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
 
 // ---------------------------------------------------------------- actions
@@ -1663,7 +2181,7 @@ function doCommit() {
   for (const record of chosen) {
     state.entries.push({
       id: state.nextEntryId++,
-      subject,
+      subject: record.subject ?? subject,
       question: record.question,
       answer: record.answer,
       options: record.options ?? [],
@@ -1820,6 +2338,52 @@ $('btn-clear').addEventListener('click', () => {
 });
 
 $('btn-copy').addEventListener('click', copyBank);
+$('btn-download').addEventListener('click', downloadBank);
+
+$('file').addEventListener('change', (event) => {
+  const [file] = event.target.files;
+  if (file) importFile(file);
+  event.target.value = '';
+});
+
+// Drop a file on the paste box.
+$('paste').addEventListener('dragover', (event) => {
+  if ([...event.dataTransfer.types].includes('Files')) {
+    event.preventDefault();
+    $('paste').classList.add('dropping');
+  }
+});
+$('paste').addEventListener('dragleave', () => $('paste').classList.remove('dropping'));
+$('paste').addEventListener('drop', (event) => {
+  $('paste').classList.remove('dropping');
+  const [file] = event.dataTransfer.files;
+  if (!file) return;
+  event.preventDefault();
+  importFile(file);
+});
+
+$('bank-filter').addEventListener('input', () => {
+  state.bankShown = BANK_PAGE;
+  renderBankList();
+});
+
+$('bank-list').addEventListener('click', (event) => {
+  const target = event.target;
+  if (target.dataset.edit) startEdit(Number(target.dataset.edit));
+  else if (target.dataset.delete) deleteEntry(Number(target.dataset.delete));
+  else if (target.dataset.cancel) {
+    state.editing = null;
+    renderBankList();
+  } else if (target.id === 'bank-more') {
+    state.bankShown += BANK_PAGE;
+    renderBankList();
+  }
+});
+
+$('bank-list').addEventListener('submit', (event) => {
+  event.preventDefault();
+  saveEdit(event.target);
+});
 
 $('btn-wipe').addEventListener('click', () => {
   if (state.entries.length === 0) return;

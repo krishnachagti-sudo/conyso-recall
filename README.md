@@ -50,8 +50,12 @@ answer key is a defect rather than a repeat. Contradictions are left unticked, s
 adding one is deliberate. Each import can be rolled back as a unit.
 
 The bank is **session-scoped**: it lives in the tab, survives a reload, and is
-gone when you close it. *Copy bank* hands it back as text to paste into a fresh
-session. Nothing is written to disk and nothing leaves the page.
+gone when you close it. *Download bank* saves it as a `.txt` you can import next
+time, options and subjects included. Nothing leaves the page.
+
+You can also import a `.txt`, `.csv` or `.tsv` file, or drop one on the paste
+box. A line `Subject: ops` tags every question after it. Under the Bank tab,
+*Everything in the bank* lists every question; edit or delete any one of them.
 
 ## Lookup
 
@@ -64,6 +68,10 @@ keeps the precision of exact matching.
 - Matched words are weighted by rarity, so a distinctive term beats the
   boilerplate every stem shares.
 - Options and answers are searchable too, at lower weight than the question.
+- Typos are forgiven, including in short words (`tkat` → *takt*), as are words
+  run together (`microsoftfoundations`) and initials (`ffm` → *Five Factor
+  Model*). A word typed exactly right is always matched exactly first; looser
+  readings are listed below it, never mixed in.
 - A word at the start or end of a stem outscores the same word mid-sentence, and
   typing the **first word and the last word** is treated as near-certain
   identification.
